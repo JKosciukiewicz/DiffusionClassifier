@@ -1,0 +1,32 @@
+from typing import Any
+from models.cnn import CNNMultiLabel
+from lightning_models.base_model import BaseModel
+import torch
+import torch.nn.functional as F
+
+
+class LightningCNN(BaseModel):
+    def __init__(self, num_classes=10, embedding_dim=128):
+        super().__init__()
+        self.model = CNNMultiLabel(num_classes=num_classes, embedding_dim=embedding_dim)
+
+    def forward(self, x) -> Any:
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        x, y, _ = batch
+        y_pred = self.model(x)
+
+        # Compute loss using the instantiated criterion
+        loss = F.binary_cross_entropy(y_pred, y)
+
+        # Log loss for monitoring
+        self.log("train_loss", loss, prog_bar=True)
+
+        return loss
+
+    def extract_features(self, x):
+        return self.model.extract_features(x)
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.model.parameters(), lr=1e-3)

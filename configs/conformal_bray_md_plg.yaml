@@ -1,0 +1,40 @@
+model:
+  class_path: lightning_models.lightning_conformal_mlp.LightningConformalClassifier
+  init_args:
+    num_classes: 30
+    embedding_dim: 4643
+    loss_weighted: True
+    loss_pos_weight: 5.21
+    alpha: 0.05
+    dropout_rate: 0.2
+    lr: 1e-4
+    size: "bbbc"
+    residual: True
+    activation_fn: torch.nn.ReLU
+    results_path: "./results_test.csv"
+
+data:
+  class_path: datamodules.bray_data_module.BrayDataModule
+  init_args:
+    data_dir: '/net/pr2/projects/plgrid/plggicv/jk/datasets/bray_features/gigadb'
+    mask_uncertain: True
+
+trainer:
+  max_epochs: 10
+  check_val_every_n_epoch: 5
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      project: "hcs-dfc"
+      name: "bray-cp-md-conformal"
+      tags: [ "conformal", "bray", "cp" ]
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: './checkpoints/bray_cp/conformal/md'
+        filename: 'epoch={epoch}-val_loss={validation_loss:.2f}'
+        monitor: 'validation_loss'
+        mode: 'min'
+        save_top_k: 20
+        every_n_epochs: 1
+        save_last: true

@@ -1,0 +1,31 @@
+model:
+  class_path: lightning_models.lightning_diffusion_mlp.LightningDiffusionClassifier
+  init_args:
+    num_classes: 10
+    embedding_dim: 128
+    backbone:
+      class_path: lightning_models.MNIST_models.lightning_cnn.LightningCNN
+      init_args:
+        num_classes: 10
+        embedding_dim: 128
+        loss_weighted: False
+    backbone_ckpt_path: "./checkpoints/mnist/cnn/cnn-epoch=09-train_loss=0.0110.ckpt"  # Update checkpoint path to match your checkpoint name
+
+data:
+  class_path: datamodules.two_digit_mnist_data_module.TwoDigitMNISTDataModule
+  init_args:
+    data_dir: './data/two_digit_mnist' # Update data dir to match your environment
+
+trainer:
+  max_epochs: 30
+  check_val_every_n_epoch: 10
+  callbacks:
+      - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+        init_args:
+          dirpath: './checkpoints/mnist/diffusion'
+          filename: 'epoch={epoch}-val_loss={val_loss:.2f}'
+          monitor: 'val_loss'
+          mode: 'min'
+          save_top_k: 3
+          every_n_epochs: 10
+          save_last: true

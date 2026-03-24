@@ -1,0 +1,34 @@
+model:
+  class_path: lightning_models.lightning_conformal_mlp.LightningConformalClassifier
+  init_args:
+    num_classes: 13
+    embedding_dim: 668
+    loss_weighted: True
+    loss_pos_weight: 12
+    alpha: 0.05
+    dropout_rate: 0.2
+    lr: 1e-4
+    size: "xsm"
+    residual: True
+    activation_fn: torch.nn.GELU
+    results_path: "./results/bray_dino/diffusion/results_0.05csv"
+
+
+data:
+  class_path: datamodules.bbbc021_data_module.BBBC021DataModule
+  init_args:
+    data_dir: '/Users/jkosciukiewicz/Developer/UJ/Projects/HCS-DFC/data/BBBC021'
+    mask_uncertain: True
+
+trainer:
+  max_epochs: 60
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: './checkpoints/bbbc/conformal'
+        filename: 'epoch={epoch}-val_loss={val_loss:.2f}'
+        monitor: 'validation_loss'
+        mode: 'min'
+        save_top_k: 3
+        every_n_epochs: 10
+        save_last: true

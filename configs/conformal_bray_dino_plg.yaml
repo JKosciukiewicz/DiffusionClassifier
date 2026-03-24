@@ -1,0 +1,42 @@
+model:
+  class_path: lightning_models.lightning_conformal_mlp.LightningConformalClassifier
+  init_args:
+    num_classes: 30
+    embedding_dim: 384
+    loss_weighted: True
+    loss_pos_weight: 5.21
+    alpha: 0.5
+    dropout_rate: 0.2
+    lr: 1e-4
+    size: "md"
+    residual: True
+    activation_fn: torch.nn.GELU
+    results_path: "./results/bray_dino/conformal/results_test.csv"
+
+data:
+  class_path: datamodules.image_feature_data_module.ImageFeatureDataModule
+  init_args:
+    split_col: 'hier_split_0'
+    data_csv_path: '/net/pr2/projects/plgrid/plggicv/jk/datasets/bray_dino/bray_dino_complete.csv'
+    mask_uncertain: True # Update data dir to match your environment
+    validation_split_val: "cal"
+
+trainer:
+  max_epochs: 60
+  check_val_every_n_epoch: 5
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      project: "hcs-dfc-mlp-final-bray-dino"
+      name: "bray-dino-xsm-conformal"
+      tags: [ "mlp", "bray", "dino" ]
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: './checkpoints_fixed/bray_dino/mlp/md'
+        filename: 'epoch={epoch}-val_roc_auc={validation_roc_auc:.2f}'
+        monitor: 'validation_roc_auc'
+        mode: 'min'
+        save_top_k: 3
+        every_n_epochs: 1
+        save_last: true
