@@ -1,17 +1,16 @@
 import lightning as L
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 from diffusers import DDPMScheduler
 
-from models.diffusion_classifier import DiffusionMLP
 from lightning_models.MNIST_models.lightning_cnn import LightningCNN
+from models.diffusion_classifier import DiffusionMLP
 from utils.conformal_prediction import (
+    apply_multiclass_thresholds,
     multiclass_conformal_thresholds,
     multiclass_non_conformity_score,
-    apply_multiclass_thresholds,
 )
-
 from utils.evaluate_conformal_model import calculate_metrics
 
 
@@ -63,15 +62,6 @@ class LightningDiffusionMLP(L.LightningModule):
 
     def configure_optimizers(self, lr=1e-3):
         return torch.optim.Adam(self.model.parameters(), lr=lr)
-
-    # Conformal prediction: Calibration step
-    def calibration_step(self, batch, batch_idx):
-        x, y = batch
-        y_pred = self.forward(x, y)
-        # Compute nonconformity score for each sample in the batch:
-        for i in range(y.shape[0]):
-            score = multiclass_non_conformity_score(y_pred[i], y[i])
-            self.nonconformity_scores.append(score)
 
     def compute_thresholds(self):
         """Compute per-class conformal thresholds after calibration."""
