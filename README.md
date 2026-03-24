@@ -1,9 +1,6 @@
-# HCS-DFC - Diffusion Classifier for HCS
-This repository contains implementation for "HCS-DFC: A Diffusion Classifier for Mode of Action Prediction UsingMorphological Profiles" [PAPER LINK].
-Implementation contains workflows for:
-- Toy two-digit MNIST dataset
-- Mode-of-action prediction using Bray et.al. dataset, from CellProfiler, Cloome and Dino4Cell features.
-- Mode-of-action prediction using BBBC021 dataset, from CellProfiler, Cloome and Dino4Cell features.
+# Diffusion Classifier
+This is a minimal, cleaned-up version of HCS-DFC - Diffusion Classifier for HCS repository [link](https://github.com/gmum/HCS-DFC/tree/develop)
+Implementation contains example workflow for 2 digit MNIST dataset.
 
 
 ## Environment Setup

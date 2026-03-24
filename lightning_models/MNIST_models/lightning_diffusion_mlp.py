@@ -27,8 +27,6 @@ class LightningDiffusionMLP(L.LightningModule):
             num_train_timesteps=1000, beta_schedule="linear"
         )
 
-        # Conformal prediction variables:
-        self.nonconformity_scores = []  # Calibration scores (list of arrays, shape: [n_calib, num_classes])
         self.thresholds = None  # Per-class thresholds computed during calibration
         self.alpha = alpha
 

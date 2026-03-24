@@ -1,21 +1,13 @@
 [project]
-name = "hcs-dfc"
+name = "diffusionclassifier"
 version = "0.1.0"
 description = "Add your description here"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "diffusers>=0.33.1",
-    "jsonargparse>=4.40.0",
-    "jsonargparse[signatures]>=4.27.7",
-    "lightning>=2.5.1.post0",
-    "pandas>=2.2.3",
-    "polars>=1.33.0",
-    "scikit-learn>=1.6.1",
-    "torchvision>=0.22.0",
-    "wandb>=0.19.11",
-]
-
-[dependency-groups]
-dev = [
-    "ruff>=0.12.7",
+    "matplotlib>=3.10.8",
+    "polars>=1.39.3",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "tqdm>=4.67.3",
 ]
