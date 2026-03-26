@@ -10,9 +10,11 @@ To create uv venv and install all dependencies run:
 ```shell
 uv sync
 ```
-and than, to activate virtual environment run
+
+## Data Genereation
+Start with generating **2-digit MNIST dataset** by running
 ```shell
-source .venv/bin/activate
+uv run _generate_mnist/generate_2_digit_mnist.py
 ```
 
 ## Training / Testing

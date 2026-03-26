@@ -1,9 +1,8 @@
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 
-from lightning_models.MNIST_models.lightning_cnn import LightningCNN
-
 from datamodules.two_digit_mnist_data_module import TwoDigitMNISTDataModule
+from lightning_models.MNIST_models.lightning_cnn import LightningCNN
 
 two_digit_mnist_datamodule = TwoDigitMNISTDataModule()
 cnn = LightningCNN()
@@ -11,7 +10,7 @@ optimizer = cnn.configure_optimizers()
 
 
 checkpoint_callback = ModelCheckpoint(
-    save_top_k=10,
+    save_top_k=1,
     monitor="train_loss",
     mode="min",
     dirpath="./checkpoints/mnist/cnn",

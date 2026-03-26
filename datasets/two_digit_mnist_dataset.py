@@ -1,41 +1,52 @@
-import os
-import pandas as pd
-from PIL import Image
-import torch
-from torch.utils.data import Dataset
 import ast
+import os
+from this import s
+
+import polars as pl
+import torch
+from PIL import Image
+from torch.utils.data import Dataset
 
 
 def convert_label_to_list(label):
     if isinstance(label, str):
         try:
-            # Convert the string representation of a list to an actual list
             return ast.literal_eval(label)
         except (ValueError, SyntaxError):
-            # Handle cases where conversion fails
             print(f"Failed to convert label: {label}")
             return label
     return label
 
 
 class TwoDigitMNISTDataset(Dataset):
-    def __init__(self, csv_file, img_dir, transform=None):
+    def __init__(
+        self,
+        csv_file,
+        image_dir=None,
+        image_col="image_path",
+        digit_prefix="digit",
+        transform=None,
+    ):
         """
         Args:
             csv_file (str): Path to the CSV file with filenames and labels.
             img_dir (str): Directory with all the images.
             transform (callable, optional): Optional transform to be applied on a sample.
         """
-        self.labels_df = pd.read_csv(csv_file)
-        self.img_dir = img_dir
+        self.labels_df = pl.read_csv(csv_file)
+        self.image_dir = image_dir
         self.transform = transform
-        self.labels_df["Label"] = self.labels_df["Label"].apply(convert_label_to_list)
+        self.image_col = image_col
+        self.digit_prefix = digit_prefix
+
+        self.labels_df = self.labels_df.with_columns(
+            pl.concat_list(pl.selectors.contains("digit")).alias("label")
+        ).drop(pl.selectors.contains("digit"))
 
     def __len__(self):
         return len(self.labels_df)
 
     def __getitem__(self, idx):
-        # Get the file name and label
         """
         :param idx:
         :return:
@@ -43,12 +54,16 @@ class TwoDigitMNISTDataset(Dataset):
             label (label)
             mask (torch.ones) param required for biological data, dummy param to skip masking and allow for common trainer
         """
-        img_name = os.path.join(self.img_dir, self.labels_df.iloc[idx].Filename)
-        label = torch.tensor(self.labels_df.iloc[idx].Label, dtype=torch.float32)
-        # Load the image
+        row = self.labels_df.row(idx, named=True)
+        if self.image_dir:
+            img_name = os.path.join(self.image_dir, row[self.image_col])
+        else:
+            img_name = row[self.image_col]
+
+        label = torch.tensor(row["label"], dtype=torch.float32)
+
         image = Image.open(img_name).convert("L")
 
-        # Apply transformations if any
         if self.transform:
             image = self.transform(image)
 

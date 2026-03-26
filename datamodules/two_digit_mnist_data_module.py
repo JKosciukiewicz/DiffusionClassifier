@@ -1,5 +1,5 @@
-import torchvision
 import torch
+import torchvision
 from torch.utils.data import DataLoader, random_split
 
 from datamodules.base_data_module import BaseDataModule
@@ -10,7 +10,7 @@ class TwoDigitMNISTDataModule(BaseDataModule):
     def __init__(
         self,
         batch_size=128,
-        data_dir="./data/two_digit_mnist",
+        data_dir="_data/dual_mnist/raw/",
         cal_split=0.2,
         noise_std=0.7,
     ):
@@ -41,8 +41,7 @@ class TwoDigitMNISTDataModule(BaseDataModule):
     def setup(self, stage: str) -> None:
         if stage == "fit":
             full_train_dataset = TwoDigitMNISTDataset(
-                csv_file="data/two_digit_mnist/train/train_labels.csv",
-                img_dir="data/two_digit_mnist/train/images",
+                csv_file="_data/dual_mnist/raw/labels.csv",
                 transform=self.train_transform,  # apply noise for training
             )
 
@@ -57,14 +56,12 @@ class TwoDigitMNISTDataModule(BaseDataModule):
         if stage == "test":
             self.test_dataset = TwoDigitMNISTDataset(
                 csv_file="data/two_digit_mnist/test/test_labels.csv",
-                img_dir="data/two_digit_mnist/test/images",
                 transform=self.test_transform,  # clean images for testing
             )
 
         if stage == "validate":
             self.val_dataset = TwoDigitMNISTDataset(
-                csv_file="data/two_digit_mnist/val/val_labels.csv",
-                img_dir="data/two_digit_mnist/val/images",
+                csv_file="data/two_digit_mnist/test/test_labels.csv",
                 transform=self.test_transform,  # clean images for validation
             )
 

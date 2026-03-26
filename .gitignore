@@ -1,3 +1,5 @@
 _data
 *.pyc
 *.csv
+.DS_Store
+diffusionclassifier.egg-info
