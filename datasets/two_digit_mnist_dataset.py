@@ -1,21 +1,10 @@
 import ast
 import os
-from this import s
 
 import polars as pl
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
-
-
-def convert_label_to_list(label):
-    if isinstance(label, str):
-        try:
-            return ast.literal_eval(label)
-        except (ValueError, SyntaxError):
-            print(f"Failed to convert label: {label}")
-            return label
-    return label
 
 
 class TwoDigitMNISTDataset(Dataset):

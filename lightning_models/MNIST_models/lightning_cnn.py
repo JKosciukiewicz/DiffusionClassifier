@@ -8,8 +8,9 @@ from models.cnn import CNNMultiLabel
 
 
 class LightningCNN(BaseModel):
-    def __init__(self, num_classes=10, embedding_dim=128):
+    def __init__(self, num_classes=10, embedding_dim=128, learning_rate=1e-3):
         super().__init__()
+        self.learning_rate = learning_rate
         self.model = CNNMultiLabel(num_classes=num_classes, embedding_dim=embedding_dim)
 
     def forward(self, x) -> Any:
@@ -31,4 +32,4 @@ class LightningCNN(BaseModel):
         return self.model.extract_features(x)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=1e-3)
+        return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
