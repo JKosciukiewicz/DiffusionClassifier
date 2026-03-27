@@ -17,7 +17,9 @@ class CNNMultiLabel(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2, 2),  # Reduces spatial size by half again
             nn.Flatten(),
-            nn.Linear(64 * 7 * 7, 128),  # 64 feature maps of size 7x7 (for 28x28 input)
+            nn.Linear(
+                64 * 32 * 32, 128
+            ),  # 64 feature maps of size 7x7 (for 28x28 input)
             nn.ReLU(),
             nn.Linear(128, embedding_dim),  # Output layer with embedding_dim
         )

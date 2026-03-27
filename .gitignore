@@ -3,3 +3,5 @@ _data
 *.csv
 .DS_Store
 diffusionclassifier.egg-info
+lightning_logs
+checkpoints

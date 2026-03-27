@@ -1,48 +1,41 @@
 from typing import Optional, Type
 
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
-import pandas as pd
-import numpy as np
+from diffusers import DDPMScheduler
+from models.bio_models.diffusion_classifier_md import DiffusionClassifierMd
 from sklearn.metrics import roc_auc_score
 
-from utils.evaluate_conformal_model import calculate_metrics
-from models.bio_models.diffusion_classifier_lg import (
-    DiffusionClassifierLg,
-    DiffusionClassifierXlg,
-)
-from models.bio_models.diffusion_classifier_md import DiffusionClassifierMd
-from models.bio_models.diffusion_classifier_sm import (
-    DiffusionClassifierSm,
-    DiffusionClassifierXsm,
-)
-from diffusers import DDPMScheduler
 from lightning_models.base_model import BaseModel
 from lightning_models.loss.weighted_masked_bce import weighted_masked_bce_loss
 from utils.conformal_prediction import (
-    multiclass_non_conformity_score,
     apply_multiclass_thresholds,
 )
+from utils.evaluate_conformal_model import calculate_metrics
+
 torch.manual_seed(42)
+
 
 class LightningDiffusionClassifier(BaseModel):
     def __init__(
-            self,
-            size: str,
-            num_classes: int,
-            embedding_dim: int,
-            lr: float,
-            alpha: float,
-            residual: bool,
-            activation_fn: Type[nn.Module],
-            results_path: str = None,
-            backbone: Optional[BaseModel] = None,
-            backbone_ckpt_path: Optional[str] = None,
-            dropout_rate: float = 0.3,
-            percent_accept: float = 10.0,
-            loss_weighted: bool = False,
-            loss_pos_weight: float = 1,
-            num_inference_timesteps: int = 1000,
+        self,
+        size: str,
+        num_classes: int,
+        embedding_dim: int,
+        lr: float,
+        alpha: float,
+        residual: bool,
+        activation_fn: Type[nn.Module],
+        results_path: str = None,
+        backbone: Optional[BaseModel] = None,
+        backbone_ckpt_path: Optional[str] = None,
+        dropout_rate: float = 0.3,
+        percent_accept: float = 10.0,
+        loss_weighted: bool = False,
+        loss_pos_weight: float = 1,
+        num_inference_timesteps: int = 1000,
     ):
         super().__init__()
 
@@ -73,46 +66,13 @@ class LightningDiffusionClassifier(BaseModel):
         # Initialize model based on size
         # NOTE: Assuming these classes have been converted to LabelGenerator architecture
         # with forward(features, noisy_labels, timesteps) -> predicted_noise
-        if size == "sm":
-            self.model = DiffusionClassifierSm(
-                num_classes=num_classes,
-                embedding_dim=embedding_dim,
-                dropout_rate=dropout_rate,
-                residual=residual,
-                activation_fn=activation_fn,
-            )
-        elif size == "xsm":
-            self.model = DiffusionClassifierXsm(
-                num_classes=num_classes,
-                embedding_dim=embedding_dim,
-                dropout_rate=dropout_rate,
-                residual=residual,
-                activation_fn=activation_fn,
-            )
-        elif size == "md":
-            self.model = DiffusionClassifierMd(
-                num_classes=num_classes,
-                embedding_dim=embedding_dim,
-                dropout_rate=dropout_rate,
-                residual=residual,
-                activation_fn=activation_fn,
-            )
-        elif size == "lg":
-            self.model = DiffusionClassifierLg(
-                num_classes=num_classes,
-                embedding_dim=embedding_dim,
-                dropout_rate=dropout_rate,
-                residual=residual,
-                activation_fn=activation_fn,
-            )
-        elif size == "xlg":
-            self.model = DiffusionClassifierXlg(
-                num_classes=num_classes,
-                embedding_dim=embedding_dim,
-                dropout_rate=dropout_rate,
-                residual=residual,
-                activation_fn=activation_fn,
-            )
+        self.model = DiffusionClassifier(
+            num_classes=num_classes,
+            embedding_dim=embedding_dim,
+            dropout_rate=dropout_rate,
+            residual=residual,
+            activation_fn=activation_fn,
+        )
 
         self.loss_fn = nn.MSELoss()
         # Noise scheduler initialization
@@ -132,7 +92,13 @@ class LightningDiffusionClassifier(BaseModel):
         self.peak_roc_auc = 0
         self.roc_aucs = []
 
-    def forward(self, features: torch.Tensor, labels: torch.Tensor, num_timesteps: int = 1, inference=False) -> torch.Tensor:
+    def forward(
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        num_timesteps: int = 1,
+        inference=False,
+    ) -> torch.Tensor:
         """
         Forward pass with optional multi-timestep sampling following diffusion classifier methodology.
 
@@ -159,8 +125,8 @@ class LightningDiffusionClassifier(BaseModel):
         #     return self._single_timestep_forward(features, labels, inference)
         # else:
         #     return self._multi_timestep_forward(features, labels, num_timesteps)
-        #return  self._single_timestep_forward(features, labels, inference)
-        return  self._single_timestep_forward(features, labels)
+        # return  self._single_timestep_forward(features, labels, inference)
+        return self._single_timestep_forward(features, labels)
 
     # def _single_timestep_forward(
     #     self, features: torch.Tensor, labels: torch.Tensor, inference:bool = False
@@ -221,7 +187,9 @@ class LightningDiffusionClassifier(BaseModel):
     #     pred_ys = torch.stack(predicted_ys, dim=0)
     #     return loss, pred_ys
 
-    def _single_timestep_forward(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def _single_timestep_forward(
+        self, features: torch.Tensor, labels: torch.Tensor
+    ) -> torch.Tensor:
         """
         Single timestep forward pass optimized for training efficiency.
 
@@ -234,11 +202,13 @@ class LightningDiffusionClassifier(BaseModel):
         """
         batch_size = labels.shape[0]
         device = labels.device
-        #noise = torch.randn_like(labels)
-        noise = torch.normal(mean = 0.040524, std=0.197185, size=labels.shape).to(device)
+        # noise = torch.randn_like(labels)
+        noise = torch.normal(mean=0.040524, std=0.197185, size=labels.shape).to(device)
         timesteps = torch.randint(
-            0, self.noise_scheduler.config.num_train_timesteps,
-            (batch_size,), device=device
+            0,
+            self.noise_scheduler.config.num_train_timesteps,
+            (batch_size,),
+            device=device,
         ).long()
 
         # Apply forward diffusion process
@@ -248,13 +218,15 @@ class LightningDiffusionClassifier(BaseModel):
         predicted_noise = self.model(
             features=features,
             noisy_labels=noisy_labels,
-            timesteps=timesteps.unsqueeze(1)
+            timesteps=timesteps.unsqueeze(1),
         )
 
         # Reconstruct clean labels via denoising
         return predicted_noise
 
-    def _multi_timestep_forward(self, features: torch.Tensor, labels: torch.Tensor, noise, num_timesteps: int) -> torch.Tensor:
+    def _multi_timestep_forward(
+        self, features: torch.Tensor, labels: torch.Tensor, noise, num_timesteps: int
+    ) -> torch.Tensor:
         """
         Multi-timestep sampling for robust inference as described in Li et al.
 
@@ -281,7 +253,7 @@ class LightningDiffusionClassifier(BaseModel):
             predicted_noise = self.model(
                 features=features,
                 noisy_labels=noisy_labels,
-                timesteps=timesteps.unsqueeze(1)
+                timesteps=timesteps.unsqueeze(1),
             )
 
             predictions.append(predicted_noise)
@@ -299,10 +271,10 @@ class LightningDiffusionClassifier(BaseModel):
             x = self.backbone.extract_features(x)
 
         # Single timestep forward pass for efficiency
-        #loss, predicted_y = self.forward(x, y, num_timesteps=1)
+        # loss, predicted_y = self.forward(x, y, num_timesteps=1)
         predicted_y = self.forward(x, y, num_timesteps=1)
 
-        #Compute weighted masked BCE loss
+        # Compute weighted masked BCE loss
         loss = weighted_masked_bce_loss(
             predicted_y,
             y,
@@ -320,7 +292,9 @@ class LightningDiffusionClassifier(BaseModel):
 
         if len(y_true_flat) > 0 and len(torch.unique(y_true_flat)) > 1:
             try:
-                roc_auc = roc_auc_score(y_true_flat.detach().numpy(), y_pred_flat.detach().numpy())
+                roc_auc = roc_auc_score(
+                    y_true_flat.detach().numpy(), y_pred_flat.detach().numpy()
+                )
                 self.log("train_roc_auc", roc_auc, prog_bar=True)
             except ValueError:
                 pass
@@ -336,7 +310,7 @@ class LightningDiffusionClassifier(BaseModel):
             x = self.backbone.extract_features(x)
 
         # Multi-timestep sampling for more robust validation predictions
-        #loss, predicted_y = self.forward(x, faux_y, num_timesteps= 1, inference = True)
+        # loss, predicted_y = self.forward(x, faux_y, num_timesteps= 1, inference = True)
         predicted_y = self.forward(x, faux_y, num_timesteps=1, inference=True)
         # Compute validation loss
         loss = weighted_masked_bce_loss(
@@ -372,8 +346,7 @@ class LightningDiffusionClassifier(BaseModel):
         faux_y = torch.randn(y.shape).to(x.device)
         noise = torch.randn_like(y)
 
-
-        #loss, y_pred = self.forward(x, faux_y, num_timesteps=1, inference = True)
+        # loss, y_pred = self.forward(x, faux_y, num_timesteps=1, inference = True)
         y_pred = self.forward(x, faux_y, num_timesteps=1, inference=True)
         bool_mask = mask.bool()
 
@@ -411,7 +384,9 @@ class LightningDiffusionClassifier(BaseModel):
         quantile = self.percent_accept / 100.0
         self.thresholds = np.quantile(calib_scores, quantile, axis=0)
 
-        print(f"Computed Diffusion Thresholds for percent_accept={self.percent_accept}%")
+        print(
+            f"Computed Diffusion Thresholds for percent_accept={self.percent_accept}%"
+        )
         print(self.thresholds)
         return self.thresholds
 
@@ -469,7 +444,9 @@ class LightningDiffusionClassifier(BaseModel):
     def _set_thresholds_from_alpha(self):
         """Automatically set thresholds based on alpha parameter."""
         self.thresholds = np.ones(self.num_classes) * (1 - self.alpha)
-        print(f"Automatically set thresholds based on alpha={self.alpha}: {self.thresholds}")
+        print(
+            f"Automatically set thresholds based on alpha={self.alpha}: {self.thresholds}"
+        )
 
     def set_thresholds(self, thresholds):
         """Manual override for thresholds if needed."""

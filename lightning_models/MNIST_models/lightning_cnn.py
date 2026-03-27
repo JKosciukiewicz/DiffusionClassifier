@@ -1,8 +1,10 @@
 from typing import Any
-from models.cnn import CNNMultiLabel
-from lightning_models.base_model import BaseModel
+
 import torch
 import torch.nn.functional as F
+
+from lightning_models.base_model import BaseModel
+from models.cnn import CNNMultiLabel
 
 
 class LightningCNN(BaseModel):
