@@ -19,7 +19,7 @@ class LightningDiffusionMLP(L.LightningModule):
         super().__init__()
         self.model = DiffusionMLP(num_classes=num_classes, embedding_dim=embedding_dim)
         self.feature_extractor = LightningCNN.load_from_checkpoint(
-            "lightning_logs/cnn/cnn-epoch=09-train_loss=0.02.ckpt"
+            "/checkpoints/mnist/cnn/cnn-epoch=09-train_loss=0.0276.ckpt"
         )
         self.feature_extractor.freeze()
         self.feature_extractor.eval()

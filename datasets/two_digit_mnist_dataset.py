@@ -39,8 +39,8 @@ class TwoDigitMNISTDataset(Dataset):
         """
         :param idx:
         :return:
-            image (image)
-            label (label)
+            image (torch.tensor)
+            label (torch.tensor)
             mask (torch.ones) param required for biological data, dummy param to skip masking and allow for common trainer
         """
         row = self.labels_df.row(idx, named=True)

@@ -44,8 +44,3 @@ All the config files available in `/configs` directory.
 - `diffusion_mnist.yaml` HCS-DFC for two-digit MNIST w/CNN backbone (requires pretrained backbone).
 - `diffusion_bray.yaml` HCS-DFC for pre-extracted Bray et.al. dataset morphological features.
 - `diffusion_bbbc.yaml` HCS-DFC for pre-extracted BBBC021 dataset morphological features.
-
-## Dataset preparation
-### Two digit MNIST toy dataset
-### Bray et.al dataset
-### BBBC021 dataset
