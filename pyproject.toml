@@ -25,3 +25,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 exclude = ["scripts*", "_data*", "_generate_mnist*"]
+
+[dependency-groups]
+dev = [
+    "marimo>=0.21.1",
+]

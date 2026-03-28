@@ -10,8 +10,8 @@ class TwoDigitMNISTDataModule(BaseDataModule):
     def __init__(
         self,
         batch_size=128,
-        data_dir="_data/dual_mnist/raw/",
-        noise_std=0.4,
+        data_dir="_data/dual_mnist/raw",
+        noise_std=0.3,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -43,26 +43,26 @@ class TwoDigitMNISTDataModule(BaseDataModule):
         if stage == "fit":
             self.train_dataset = TwoDigitMNISTDataset(
                 image_dir=self.data_dir,
-                csv_file="_data/dual_mnist/raw/train.csv",
+                csv_file=f"{self.data_dir}/train.csv",
                 transform=self.train_transform,  # apply noise for training
             )
             self.val_dataset = TwoDigitMNISTDataset(
                 image_dir=self.data_dir,
-                csv_file="_data/dual_mnist/raw/val.csv",
+                csv_file=f"{self.data_dir}/val.csv",
                 transform=self.test_val_transform,  # apply noise for training
             )
 
         if stage == "test":
             self.test_dataset = TwoDigitMNISTDataset(
                 image_dir=self.data_dir,
-                csv_file="_data/dual_mnist/raw/test.csv",
+                csv_file=f"{self.data_dir}/test.csv",
                 transform=self.test_val_transform,  # apply noise for training
             )
 
         if stage == "validate":
             self.val_dataset = TwoDigitMNISTDataset(
                 image_dir=self.data_dir,
-                csv_file="_data/dual_mnist/raw/val.csv",
+                csv_file=f"{self.data_dir}/val.csv",
                 transform=self.test_val_transform,  # apply noise for training
             )
 

@@ -75,7 +75,6 @@ class LightningDiffusionClassifier(BaseModel):
         self,
         features: torch.Tensor,
         labels: torch.Tensor,
-        num_timesteps: int = 1,
         inference=False,
     ) -> torch.Tensor:
         batch_size = labels.shape[0]
@@ -116,7 +115,7 @@ class LightningDiffusionClassifier(BaseModel):
         x, y, mask = batch
 
         x = self.cnn.extract_features(x)
-        predicted_y = self.forward(x, y, num_timesteps=1)
+        predicted_y = self.forward(x, y)
 
         # Compute weighted masked BCE loss
         loss = self.loss_fn(predicted_y, y)
@@ -143,7 +142,7 @@ class LightningDiffusionClassifier(BaseModel):
         x, y, mask = batch
         x = self.cnn.extract_features(x)
 
-        predicted_y = self.forward(x, y, num_timesteps=1, inference=True)
+        predicted_y = self.forward(x, y, inference=True)
 
         loss = self.loss_fn(predicted_y, y)
 
@@ -169,8 +168,9 @@ class LightningDiffusionClassifier(BaseModel):
     def test_step(self, batch, batch_idx):
         """Test step with multi-timestep sampling for final evaluation."""
         x, y, mask = batch
+        x = self.cnn.extract_features(x)
 
-        y_pred = self.forward(x, y, num_timesteps=1, inference=True)
+        y_pred = self.forward(x, y, inference=True)
         bool_mask = mask.bool()
 
         y_pred = y_pred[bool_mask].cpu()
