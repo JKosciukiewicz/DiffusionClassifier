@@ -83,8 +83,6 @@ class LightningDiffusionClassifier(BaseModel):
         inference=False,
     ) -> torch.Tensor:
 
-        features = self.cnn.forward(features)
-
         return self._single_timestep_forward(features, labels)
 
     # def _single_timestep_forward(
@@ -226,8 +224,7 @@ class LightningDiffusionClassifier(BaseModel):
         x, y, mask = batch
 
         # Extract backbone features if specified
-        if self.backbone:
-            x = self.backbone.extract_features(x)
+        x = self.cnn.extract_features(x)
 
         # Single timestep forward pass for efficiency
         # loss, predicted_y = self.forward(x, y, num_timesteps=1)
@@ -264,9 +261,7 @@ class LightningDiffusionClassifier(BaseModel):
         """Validation step with multi-timestep sampling for robust evaluation."""
         x, y, mask = batch
         faux_y = torch.randn(y.shape).to(x.device)
-        # Extract backbone features if specified
-        if self.backbone:
-            x = self.backbone.extract_features(x)
+        x = self.cnn.extract_features(x)
 
         # Multi-timestep sampling for more robust validation predictions
         # loss, predicted_y = self.forward(x, faux_y, num_timesteps= 1, inference = True)

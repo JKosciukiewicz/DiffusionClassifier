@@ -4,7 +4,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from datamodules.two_digit_mnist_data_module import TwoDigitMNISTDataModule
 from lightning_models import LightningDiffusionClassifier
 
-two_digit_mnist_datamodule = TwoDigitMNISTDataModule(batch_size=32)
+two_digit_mnist_datamodule = TwoDigitMNISTDataModule(batch_size=64)
 
 diffusion = LightningDiffusionClassifier(
     alpha=0.05,

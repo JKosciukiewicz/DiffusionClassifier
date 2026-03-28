@@ -40,36 +40,29 @@ class TwoDigitMNISTDataModule(BaseDataModule):
 
     def setup(self, stage: str) -> None:
         if stage == "fit":
-            full_train_dataset = TwoDigitMNISTDataset(
+            self.train_dataset = TwoDigitMNISTDataset(
+                csv_file="_data/dual_mnist/raw/labels.csv",
+                transform=self.train_transform,  # apply noise for training
+            )
+            self.val_dataset = TwoDigitMNISTDataset(
                 csv_file="_data/dual_mnist/raw/labels.csv",
                 transform=self.train_transform,  # apply noise for training
             )
 
-            # Ensure the split is always the same
-            torch.manual_seed(self.seed)
-            train_size = int((1 - self.cal_split) * len(full_train_dataset))
-            cal_size = len(full_train_dataset) - train_size
-            self.train_dataset, self.cal_dataset = random_split(
-                full_train_dataset, [train_size, cal_size]
-            )
-
         if stage == "test":
             self.test_dataset = TwoDigitMNISTDataset(
-                csv_file="data/two_digit_mnist/test/test_labels.csv",
-                transform=self.test_transform,  # clean images for testing
+                csv_file="_data/dual_mnist/raw/labels.csv",
+                transform=self.train_transform,  # apply noise for training
             )
 
         if stage == "validate":
             self.val_dataset = TwoDigitMNISTDataset(
-                csv_file="data/two_digit_mnist/test/test_labels.csv",
-                transform=self.test_transform,  # clean images for validation
+                csv_file="_data/dual_mnist/raw/labels.csv",
+                transform=self.train_transform,  # apply noise for training
             )
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
-
-    def calibration_dataloader(self):
-        return DataLoader(self.cal_dataset, batch_size=self.batch_size, shuffle=False)
 
     def test_dataloader(self):
         return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False)
