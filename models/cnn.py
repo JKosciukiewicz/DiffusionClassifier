@@ -1,36 +1,67 @@
+import torch
 from torch import nn
+
+
+class ResidualBlock(nn.Module):
+    """Conv block with a skip connection. Handles channel mismatches via a 1x1 projection."""
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+        )
+        # Project the skip connection if channel dims differ
+        self.skip = (
+            nn.Conv2d(in_channels, out_channels, kernel_size=1)
+            if in_channels != out_channels
+            else nn.Identity()
+        )
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        return self.relu(self.block(x) + self.skip(x))
 
 
 class CNNMultiLabel(nn.Module):
     def __init__(self, num_classes=10, embedding_dim=128):
         super().__init__()
-        # CNN for feature extraction and Diffusion conditioning
-        self.feature_extractor = nn.Sequential(
-            nn.Conv2d(
-                1, 32, kernel_size=3, padding=1
-            ),  # Input: 1 channel, Output: 32 channels
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # Reduces spatial size by half
-            nn.Conv2d(
-                32, 64, kernel_size=3, padding=1
-            ),  # Input: 32 channels, Output: 64 channels
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # Reduces spatial size by half again
-            nn.Flatten(),
-            nn.Linear(
-                64 * 32 * 32, 128
-            ),  # 64 feature maps of size 7x7 (for 28x28 input)
-            nn.ReLU(),
-            nn.Linear(128, embedding_dim),  # Output layer with embedding_dim
-        )
-        self.classifier = nn.Sequential(
-            nn.Linear(embedding_dim, num_classes),
-            nn.Sigmoid(),  # Outputs independent probabilities for each class
-        )
 
-    def forward(self, x):
-        features = self.feature_extractor(x)
-        return self.classifier(features)
+        self.conv1 = ResidualBlock(1, 32)
+        self.pool1 = nn.MaxPool2d(2, 2)
+
+        self.conv2 = ResidualBlock(32, 64)
+        self.pool2 = nn.MaxPool2d(2, 2)
+
+        self.flatten = nn.Flatten()
+
+        # FC layers with a residual connection (dims match at 128)
+        self.fc1 = nn.Linear(64 * 32 * 32, 128)
+        self.fc2 = nn.Linear(128, embedding_dim)
+        self.fc_skip = (
+            nn.Linear(128, embedding_dim) if 128 != embedding_dim else nn.Identity()
+        )
+        self.relu = nn.ReLU()
+
+        self.classifier = nn.Sequential(
+            nn.Linear(embedding_dim, int(embedding_dim / 2)),
+            nn.BatchNorm1d(int(embedding_dim / 2)),
+            nn.ReLU(),
+            nn.Linear(int(embedding_dim / 2), num_classes),
+            nn.Sigmoid(),
+        )
 
     def extract_features(self, x):
-        return self.feature_extractor(x)
+        x = self.pool1(self.conv1(x))
+        x = self.pool2(self.conv2(x))
+        x = self.flatten(x)
+
+        # Residual FC block
+        h = self.relu(self.fc1(x))
+        return self.relu(self.fc2(h) + self.fc_skip(h))
+
+    def forward(self, x):
+        return self.classifier(self.extract_features(x))

@@ -27,10 +27,9 @@ class LightningDiffusionClassifier(BaseModel):
         residual: bool = True,
         activation_fn: Type[nn.Module] = nn.GELU,
         loss_fn: Type[nn.Module] = nn.BCELoss,
-        results_path: str = None,
         cnn_ckpt_path: Optional[str] = None,
         dropout_rate: float = 0.3,
-        num_inference_timesteps: int = 1000,
+        num_timesteps: int = 1000,
     ):
         super().__init__()
 
@@ -38,10 +37,9 @@ class LightningDiffusionClassifier(BaseModel):
         self.alpha = alpha
         self.num_classes = num_classes
         self.lr = lr
-        self.results_file = results_path
         self.embedding_dim = embedding_dim
 
-        self.num_inference_timesteps = num_inference_timesteps
+        self.num_timesteps = num_timesteps
 
         self.nonconformity_scores = []
         self.thresholds = None
@@ -59,7 +57,7 @@ class LightningDiffusionClassifier(BaseModel):
         self.loss_fn = loss_fn()
 
         self.noise_scheduler = DDPMScheduler(
-            num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2"
+            num_train_timesteps=self.num_timesteps, beta_schedule="squaredcos_cap_v2"
         )
 
         self.y_pred_conf = []
@@ -83,15 +81,25 @@ class LightningDiffusionClassifier(BaseModel):
         batch_size = labels.shape[0]
         device = labels.device
         noise = torch.randn_like(labels)
-        timesteps = torch.randint(
-            0,
-            self.noise_scheduler.config.num_train_timesteps,
-            (batch_size,),
-            device=device,
-        ).long()
 
-        # Apply forward diffusion process
-        noisy_labels = self.noise_scheduler.add_noise(labels, noise, timesteps)
+        if inference:
+            # Inference -> label = gaussian noise, timestep = max possible timestep
+            timesteps = torch.full(
+                (batch_size,),
+                self.num_timesteps,
+                device=device,
+                dtype=torch.long,
+            )
+            noisy_labels = torch.rand_like(labels).to(features.device)
+        else:
+            # Training -> label with random noise added based on the timestep, timestep selected randomly
+            timesteps = torch.randint(
+                0,
+                self.num_timesteps,
+                (batch_size,),
+                device=device,
+            ).long()
+            noisy_labels = self.noise_scheduler.add_noise(labels, noise, timesteps)
 
         # Predict added noise using the model
         predicted_noise = self.model(
@@ -133,10 +141,9 @@ class LightningDiffusionClassifier(BaseModel):
     def validation_step(self, batch, batch_idx):
         """Validation step with multi-timestep sampling for robust evaluation."""
         x, y, mask = batch
-        faux_y = torch.randn(y.shape).to(x.device)
         x = self.cnn.extract_features(x)
 
-        predicted_y = self.forward(x, faux_y, num_timesteps=1, inference=True)
+        predicted_y = self.forward(x, y, num_timesteps=1, inference=True)
 
         loss = self.loss_fn(predicted_y, y)
 
@@ -162,10 +169,8 @@ class LightningDiffusionClassifier(BaseModel):
     def test_step(self, batch, batch_idx):
         """Test step with multi-timestep sampling for final evaluation."""
         x, y, mask = batch
-        faux_y = torch.randn(y.shape).to(x.device)
-        noise = torch.randn_like(y)
 
-        y_pred = self.forward(x, faux_y, num_timesteps=1, inference=True)
+        y_pred = self.forward(x, y, num_timesteps=1, inference=True)
         bool_mask = mask.bool()
 
         y_pred = y_pred[bool_mask].cpu()
@@ -229,9 +234,6 @@ class LightningDiffusionClassifier(BaseModel):
     def _set_thresholds_from_alpha(self):
         """Automatically set thresholds based on alpha parameter."""
         self.thresholds = np.ones(self.num_classes) * (1 - self.alpha)
-        print(
-            f"Automatically set thresholds based on alpha={self.alpha}: {self.thresholds}"
-        )
 
     def set_thresholds(self, thresholds):
         """Manual override for thresholds if needed."""

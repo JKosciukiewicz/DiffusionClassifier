@@ -19,12 +19,19 @@ class LightningCNN(BaseModel):
     def training_step(self, batch, batch_idx):
         x, y, _ = batch
         y_pred = self.model(x)
-
-        # Compute loss using the instantiated criterion
         loss = F.binary_cross_entropy(y_pred, y)
 
         # Log loss for monitoring
         self.log("train_loss", loss, prog_bar=True)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y, _ = batch
+        y_pred = self.model(x)
+        loss = F.binary_cross_entropy(y_pred, y)
+
+        self.log("val_loss", loss, prog_bar=True)
 
         return loss
 

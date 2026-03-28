@@ -11,13 +11,11 @@ class TwoDigitMNISTDataModule(BaseDataModule):
         self,
         batch_size=128,
         data_dir="_data/dual_mnist/raw/",
-        cal_split=0.2,
-        noise_std=0.7,
+        noise_std=0.4,
     ):
         super().__init__()
         self.batch_size = batch_size
         self.data_dir = data_dir
-        self.cal_split = cal_split  # Calibration split ratio
         self.seed = 42
         self.noise_std = noise_std
 
@@ -25,11 +23,14 @@ class TwoDigitMNISTDataModule(BaseDataModule):
         self.train_transform = torchvision.transforms.Compose(
             [
                 torchvision.transforms.ToTensor(),
+                torchvision.transforms.Lambda(
+                    lambda x: x + torch.randn_like(x) * self.noise_std
+                ),
             ]
         )
 
         # Test/Validation transform: clean image (no noise)
-        self.test_transform = torchvision.transforms.Compose(
+        self.test_val_transform = torchvision.transforms.Compose(
             [
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Lambda(
@@ -41,24 +42,28 @@ class TwoDigitMNISTDataModule(BaseDataModule):
     def setup(self, stage: str) -> None:
         if stage == "fit":
             self.train_dataset = TwoDigitMNISTDataset(
-                csv_file="_data/dual_mnist/raw/labels.csv",
+                image_dir=self.data_dir,
+                csv_file="_data/dual_mnist/raw/train.csv",
                 transform=self.train_transform,  # apply noise for training
             )
             self.val_dataset = TwoDigitMNISTDataset(
-                csv_file="_data/dual_mnist/raw/labels.csv",
-                transform=self.train_transform,  # apply noise for training
+                image_dir=self.data_dir,
+                csv_file="_data/dual_mnist/raw/val.csv",
+                transform=self.test_val_transform,  # apply noise for training
             )
 
         if stage == "test":
             self.test_dataset = TwoDigitMNISTDataset(
-                csv_file="_data/dual_mnist/raw/labels.csv",
-                transform=self.train_transform,  # apply noise for training
+                image_dir=self.data_dir,
+                csv_file="_data/dual_mnist/raw/test.csv",
+                transform=self.test_val_transform,  # apply noise for training
             )
 
         if stage == "validate":
             self.val_dataset = TwoDigitMNISTDataset(
-                csv_file="_data/dual_mnist/raw/labels.csv",
-                transform=self.train_transform,  # apply noise for training
+                image_dir=self.data_dir,
+                csv_file="_data/dual_mnist/raw/val.csv",
+                transform=self.test_val_transform,  # apply noise for training
             )
 
     def train_dataloader(self):

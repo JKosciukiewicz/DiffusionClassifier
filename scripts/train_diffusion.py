@@ -11,7 +11,7 @@ diffusion = LightningDiffusionClassifier(
     num_classes=10,
     embedding_dim=128,
     lr=1e-4,
-    cnn_ckpt_path="checkpoints/mnist/cnn/cnn-epoch=09-train_loss=0.0276.ckpt",
+    cnn_ckpt_path="checkpoints/mnist/cnn/cnn-epoch=17-train_loss=0.0333-val_loss=0.3653.ckpt",
 )
 
 diffusion.configure_optimizers()
@@ -22,9 +22,11 @@ checkpoint_callback = ModelCheckpoint(
     monitor="train_loss",
     mode="min",
     dirpath="./checkpoints/mnist/diffusion",
-    filename="cnn-{epoch:02d}-{train_loss:.4f}",
+    filename="diffusion-{epoch:02d}-{train_loss:.4f}-{validation_loss:.4f}",
     every_n_epochs=10,
 )
 
-trainer = L.Trainer(max_epochs=10, callbacks=[checkpoint_callback])
+trainer = L.Trainer(
+    max_epochs=10, callbacks=[checkpoint_callback], check_val_every_n_epoch=3
+)
 trainer.fit(model=diffusion, datamodule=two_digit_mnist_datamodule)
