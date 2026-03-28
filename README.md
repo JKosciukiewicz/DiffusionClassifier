@@ -13,8 +13,13 @@ uv sync
 
 ## Data Genereation
 Start with generating **2-digit MNIST dataset** by running
+- Normal 2-digit MNIST
 ```shell
 uv run _generate_mnist/generate_2_digit_mnist.py
+```
+- 2-digit MNIST + occlusion (image might not contain all of the corresponding labels)
+```shell
+uv run _generate_mnist/generate_occluded_2_digit_mnist.py
 ```
 
 ## Training / Testing
