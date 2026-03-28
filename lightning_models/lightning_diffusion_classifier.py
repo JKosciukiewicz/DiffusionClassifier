@@ -26,10 +26,10 @@ class LightningDiffusionClassifier(BaseModel):
         alpha: float,
         residual: bool = True,
         activation_fn: Type[nn.Module] = nn.GELU,
+        loss_fn: Type[nn.Module] = nn.BCELoss,
         results_path: str = None,
         cnn_ckpt_path: Optional[str] = None,
         dropout_rate: float = 0.3,
-        percent_accept: float = 10.0,
         num_inference_timesteps: int = 1000,
     ):
         super().__init__()
@@ -45,7 +45,6 @@ class LightningDiffusionClassifier(BaseModel):
 
         self.nonconformity_scores = []
         self.thresholds = None
-        self.percent_accept = percent_accept
 
         self.cnn = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
 
@@ -57,7 +56,7 @@ class LightningDiffusionClassifier(BaseModel):
             activation_fn=activation_fn,
         )
 
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = loss_fn()
 
         self.noise_scheduler = DDPMScheduler(
             num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2"
@@ -83,8 +82,7 @@ class LightningDiffusionClassifier(BaseModel):
     ) -> torch.Tensor:
         batch_size = labels.shape[0]
         device = labels.device
-        # noise = torch.randn_like(labels)
-        noise = torch.normal(mean=0.040524, std=0.197185, size=labels.shape).to(device)
+        noise = torch.randn_like(labels)
         timesteps = torch.randint(
             0,
             self.noise_scheduler.config.num_train_timesteps,
@@ -188,24 +186,6 @@ class LightningDiffusionClassifier(BaseModel):
         self.cls_rejected += cls_rejected
         self.y_true_bt.append(y_true_bt)
         self.y_pred_conf_bt.append(y_pred_bt)
-
-    def compute_thresholds(self):
-        """Compute conformal prediction thresholds based on calibration scores."""
-        if not self.nonconformity_scores:
-            raise ValueError("No nonconformity scores recorded. Run calibration first.")
-
-        # Convert to numpy array for percentile calculation
-        calib_scores = np.array(self.nonconformity_scores)
-
-        # Calculate threshold at the given percentile
-        quantile = self.percent_accept / 100.0
-        self.thresholds = np.quantile(calib_scores, quantile, axis=0)
-
-        print(
-            f"Computed Diffusion Thresholds for percent_accept={self.percent_accept}%"
-        )
-        print(self.thresholds)
-        return self.thresholds
 
     def on_fit_end(self):
         """Called when fit ends - automatically set thresholds based on alpha."""

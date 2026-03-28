@@ -18,7 +18,6 @@ uv run _generate_mnist/generate_2_digit_mnist.py
 ```
 
 ## Training / Testing
-**TODO: ADD EXAMPLE EMPTY CONFIG, ADD TESTING CODE**   
 This project utilizes [Pytorch Lightning](https://lightning.ai/docs/pytorch/stable/) to manage training, to fully utilize lightning additional CLI is required [WIP]
 
 
