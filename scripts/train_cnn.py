@@ -2,11 +2,11 @@ import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 from datamodules.two_digit_mnist_data_module import TwoDigitMNISTDataModule
-from lightning_models.MNIST_models.lightning_cnn import LightningCNN
+from lightning_models import LightningCNN
 
 two_digit_mnist_datamodule = TwoDigitMNISTDataModule(batch_size=32)
 cnn = LightningCNN()
-optimizer = cnn.configure_optimizers()
+cnn.configure_optimizers()
 
 
 checkpoint_callback = ModelCheckpoint(

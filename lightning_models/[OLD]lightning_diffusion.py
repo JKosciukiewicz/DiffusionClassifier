@@ -4,8 +4,8 @@ import torch
 import torch.nn.functional as F
 from diffusers import DDPMScheduler
 
-from lightning_models.MNIST_models.lightning_cnn import LightningCNN
-from models.diffusion_classifier import DiffusionMLP
+from lightning_models.lightning_cnn import LightningCNN
+from models.diffusion_classifier import DiffusionModel
 from utils.conformal_prediction import (
     apply_multiclass_thresholds,
     multiclass_conformal_thresholds,
@@ -14,10 +14,12 @@ from utils.conformal_prediction import (
 from utils.evaluate_conformal_model import calculate_metrics
 
 
-class LightningDiffusionMLP(L.LightningModule):
+class LightningDiffusion(L.LightningModule):
     def __init__(self, num_classes=10, embedding_dim=128, alpha=0.05):
         super().__init__()
-        self.model = DiffusionMLP(num_classes=num_classes, embedding_dim=embedding_dim)
+        self.model = DiffusionModel(
+            num_classes=num_classes, embedding_dim=embedding_dim
+        )
         self.feature_extractor = LightningCNN.load_from_checkpoint(
             "/checkpoints/mnist/cnn/cnn-epoch=09-train_loss=0.0276.ckpt"
         )
@@ -107,11 +109,11 @@ class LightningDiffusionMLP(L.LightningModule):
         )
         self.log_dict(metrics)
 
-    def on_test_epoch_end(self) -> None:
-        # Concatenate tie-breaker predictions from all test batches.
-        # Expected shape: (total_samples, num_classes) e.g. (12000, 10)
-        y_pred_all = np.vstack(self.y_pred_conf_bt)
-        # plot_ambiguous_class_distribution(y_pred_all)
+    # def on_test_epoch_end(self) -> None:
+    # Concatenate tie-breaker predictions from all test batches.
+    # Expected shape: (total_samples, num_classes) e.g. (12000, 10)
+    # y_pred_all = np.vstack(self.y_pred_conf_bt)
+    # plot_ambiguous_class_distribution(y_pred_all)
 
     def predict(self, x, y_dummy):
         """

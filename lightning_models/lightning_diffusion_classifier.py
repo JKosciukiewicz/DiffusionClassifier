@@ -1,15 +1,14 @@
 from typing import Optional, Type
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from diffusers import DDPMScheduler
-from models.bio_models.diffusion_classifier_md import DiffusionClassifierMd
 from sklearn.metrics import roc_auc_score
 
 from lightning_models.base_model import BaseModel
-from lightning_models.loss.weighted_masked_bce import weighted_masked_bce_loss
+from lightning_models.lightning_cnn import LightningCNN
+from models.diffusion_classifier import DiffusionClassifier
 from utils.conformal_prediction import (
     apply_multiclass_thresholds,
 )
@@ -21,20 +20,16 @@ torch.manual_seed(42)
 class LightningDiffusionClassifier(BaseModel):
     def __init__(
         self,
-        size: str,
         num_classes: int,
         embedding_dim: int,
         lr: float,
         alpha: float,
-        residual: bool,
-        activation_fn: Type[nn.Module],
+        residual: bool = True,
+        activation_fn: Type[nn.Module] = nn.GELU,
         results_path: str = None,
-        backbone: Optional[BaseModel] = None,
-        backbone_ckpt_path: Optional[str] = None,
+        cnn_ckpt_path: Optional[str] = None,
         dropout_rate: float = 0.3,
         percent_accept: float = 10.0,
-        loss_weighted: bool = False,
-        loss_pos_weight: float = 1,
         num_inference_timesteps: int = 1000,
     ):
         super().__init__()
@@ -43,29 +38,17 @@ class LightningDiffusionClassifier(BaseModel):
         self.alpha = alpha
         self.num_classes = num_classes
         self.lr = lr
-        self.loss_weighted = loss_weighted
-        self.loss_pos_weight = loss_pos_weight
         self.results_file = results_path
         self.embedding_dim = embedding_dim
 
-        # Multi-timestep sampling parameters
         self.num_inference_timesteps = num_inference_timesteps
 
-        # Conformal prediction variables
         self.nonconformity_scores = []
         self.thresholds = None
         self.percent_accept = percent_accept
 
-        # Initialize backbone if specified
-        self.backbone = (
-            type(backbone).load_from_checkpoint(backbone_ckpt_path)
-            if backbone
-            else None
-        )
+        self.cnn = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
 
-        # Initialize model based on size
-        # NOTE: Assuming these classes have been converted to LabelGenerator architecture
-        # with forward(features, noisy_labels, timesteps) -> predicted_noise
         self.model = DiffusionClassifier(
             num_classes=num_classes,
             embedding_dim=embedding_dim,
@@ -75,7 +58,7 @@ class LightningDiffusionClassifier(BaseModel):
         )
 
         self.loss_fn = nn.MSELoss()
-        # Noise scheduler initialization
+
         self.noise_scheduler = DDPMScheduler(
             num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2"
         )
@@ -99,33 +82,9 @@ class LightningDiffusionClassifier(BaseModel):
         num_timesteps: int = 1,
         inference=False,
     ) -> torch.Tensor:
-        """
-        Forward pass with optional multi-timestep sampling following diffusion classifier methodology.
 
-        Args:
-            features: Input features (batch_size, embedding_dim)
-            labels: Input labels (batch_size, num_classes)
-            num_timesteps: Number of timesteps to sample for averaging (default=1 for training)
+        features = self.cnn.forward(features)
 
-        Returns:
-            predicted_labels: Averaged predictions across timesteps (batch_size, num_classes)
-
-        Mathematical formulation:
-        $$\\hat{y} = \\frac{1}{N}\\sum_{i=1}^{N} \\sigma\\left(x_{t_i} - \\epsilon_\\theta(x_{t_i}, f, t_i)\\right)$$
-
-        Where:
-        - $N$ = num_timesteps
-        - $t_i$ = randomly sampled timesteps
-        - $x_{t_i}$ = noisy labels at timestep $t_i$
-        - $f$ = input features
-        - $\\epsilon_\\theta$ = noise prediction network
-        - $\\sigma$ = sigmoid activation
-        """
-        # if num_timesteps == 1:
-        #     return self._single_timestep_forward(features, labels, inference)
-        # else:
-        #     return self._multi_timestep_forward(features, labels, num_timesteps)
-        # return  self._single_timestep_forward(features, labels, inference)
         return self._single_timestep_forward(features, labels)
 
     # def _single_timestep_forward(

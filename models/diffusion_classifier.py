@@ -1,9 +1,10 @@
-import torch
-import torch.nn as nn
 from typing import Type
 
+import torch
+import torch.nn as nn
 
-class DiffusionClassifierMd(nn.Module):
+
+class DiffusionClassifier(nn.Module):
     """
     Medium diffusion classifier with class conditioning.
 
