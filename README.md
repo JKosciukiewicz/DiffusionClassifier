@@ -19,28 +19,22 @@ uv run _generate_mnist/generate_2_digit_mnist.py
 
 ## Training / Testing
 **TODO: ADD EXAMPLE EMPTY CONFIG, ADD TESTING CODE**   
-This project utilizes [Pytorch Lightning](https://lightning.ai/docs/pytorch/stable/) to manage training, therefore it is possible to control entire traning / testing process using configs located in `/configs` directory. 
+This project utilizes [Pytorch Lightning](https://lightning.ai/docs/pytorch/stable/) to manage training, to fully utilize lightning additional CLI is required [WIP]
 
 
-To train backbone CNN (for two-digit MNIST only)
+CNN Training
 ```shell
 python lightning_training/train_cnn.py 
 ```
-To train model run
+Diffusion Training
 ```shell
- python scripts/train_model.py fit -c configs/[your_config_file].yaml
-```
-You can also override any config parameter by using [CLI arguments](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli.html), for example:
-```shell
- python scripts/train_model.py fit -c configs/[your_config_file].yaml --trainer.max_epochs=20
-```
-To test model
-```shell
- python scripts/train_model.py test -c configs/[your_config_file].yaml
+python lightning_training/train_diffusion.py 
 ```
 
-### Available configs
-All the config files available in `/configs` directory.
-- `diffusion_mnist.yaml` HCS-DFC for two-digit MNIST w/CNN backbone (requires pretrained backbone).
-- `diffusion_bray.yaml` HCS-DFC for pre-extracted Bray et.al. dataset morphological features.
-- `diffusion_bbbc.yaml` HCS-DFC for pre-extracted BBBC021 dataset morphological features.
+## Code changes
+put the necessary code changes in
+
+
+Architectures -> `/models`
+
+Lightning Wrappers containing looops etc. -> `/lightning_models`
