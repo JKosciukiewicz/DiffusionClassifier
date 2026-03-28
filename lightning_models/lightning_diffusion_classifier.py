@@ -63,7 +63,6 @@ class LightningDiffusionClassifier(BaseModel):
             num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2"
         )
 
-        # Evaluation metric accumulation
         self.y_pred_conf = []
         self.y_true = []
         self.y_pred_conf_bt = []
@@ -82,81 +81,6 @@ class LightningDiffusionClassifier(BaseModel):
         num_timesteps: int = 1,
         inference=False,
     ) -> torch.Tensor:
-
-        return self._single_timestep_forward(features, labels)
-
-    # def _single_timestep_forward(
-    #     self, features: torch.Tensor, labels: torch.Tensor, inference:bool = False
-    # ) -> torch.Tensor:
-    #     """
-    #     Single timestep forward pass optimized for training efficiency.
-    #
-    #     Implements the core diffusion process:
-    #     1. Sample random timestep $t \\sim U[0, T]$
-    #     2. Sample noise $\\epsilon \\sim \\mathcal{N}(0, I)$
-    #     3. Create noisy labels: $x_t = \\sqrt{\\bar{\\alpha}_t} y + \\sqrt{1-\\bar{\\alpha}_t} \\epsilon$
-    #     4. Predict noise: $\\hat{\\epsilon} = \\epsilon_\\theta(x_t, f, t)$
-    #     5. Reconstruct: $\\hat{y} = \\text{scheduler.step}(\\hat{\\epsilon}, t, x_t)$
-    #     """
-    #     batch_size = labels.shape[0]
-    #     device = labels.device
-    #     noise = torch.randn_like(labels)
-    #     timesteps = torch.randint(
-    #         0,
-    #         self.noise_scheduler.config.num_train_timesteps,
-    #         (batch_size,),
-    #         device=device,
-    #     ).long()
-    #
-    #     noisy_labels = self.noise_scheduler.add_noise(labels, noise, timesteps)
-    #
-    #     # Predict added noise using the model
-    #     predicted_noise = self.model(
-    #         features=features,
-    #         noisy_labels=noisy_labels,
-    #         timesteps=timesteps.unsqueeze(1),
-    #     )
-    #
-    #     loss = self.loss_fn(predicted_noise, noise)
-    #
-    #     # Reconstruct clean labels via denoising step (process each sample individually)
-    #     predicted_ys = []
-    #     for ts, outputs, label in zip(timesteps, predicted_noise, noisy_labels):
-    #         # Add batch dimension back since scheduler expects batched tensors
-    #         outputs_batched = outputs.unsqueeze(
-    #             0
-    #         )  # Add batch dim: [features] -> [1, features]
-    #         label_batched = label.unsqueeze(
-    #             0
-    #         )  # Add batch dim: [features] -> [1, features]
-    #         if inference:
-    #             ts = torch.tensor(self.noise_scheduler.config.num_train_timesteps)
-    #         ts_batched = ts.unsqueeze(0)  # Add batch dim: [] -> [1]
-    #
-    #         predicted_y = self.noise_scheduler.step(
-    #             outputs_batched, ts_batched, label_batched
-    #         ).pred_original_sample
-    #         predicted_ys.append(
-    #             predicted_y.squeeze(0)
-    #         )  # Remove batch dim for consistency
-    #
-    #     # Stack all predictions back into a batch
-    #     pred_ys = torch.stack(predicted_ys, dim=0)
-    #     return loss, pred_ys
-
-    def _single_timestep_forward(
-        self, features: torch.Tensor, labels: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Single timestep forward pass optimized for training efficiency.
-
-        Implements the core diffusion process:
-        1. Sample random timestep $t \\sim U[0, T]$
-        2. Sample noise $\\epsilon \\sim \\mathcal{N}(0, I)$
-        3. Create noisy labels: $x_t = \\sqrt{\\bar{\\alpha}_t} y + \\sqrt{1-\\bar{\\alpha}_t} \\epsilon$
-        4. Predict noise: $\\hat{\\epsilon} = \\epsilon_\\theta(x_t, f, t)$
-        5. Reconstruct: $\\hat{y} = \\sigma(x_t - \\hat{\\epsilon})$
-        """
         batch_size = labels.shape[0]
         device = labels.device
         # noise = torch.randn_like(labels)
@@ -181,66 +105,17 @@ class LightningDiffusionClassifier(BaseModel):
         # Reconstruct clean labels via denoising
         return predicted_noise
 
-    def _multi_timestep_forward(
-        self, features: torch.Tensor, labels: torch.Tensor, noise, num_timesteps: int
-    ) -> torch.Tensor:
-        """
-        Multi-timestep sampling for robust inference as described in Li et al.
-
-        Implements Monte Carlo estimation over multiple timesteps to reduce variance:
-        $$\\mathbb{E}_{t,\\epsilon}[\\|\\epsilon - \\epsilon_\\theta(x_t, f, t)\\|^2]$$
-
-        By averaging predictions across $N$ independent samples of $(t_i, \\epsilon_i)$ pairs.
-        """
-        batch_size = labels.shape[0]
-        device = labels.device
-        predictions = []
-
-        # Perform multiple independent forward passes
-        for _ in range(num_timesteps):
-            timesteps = torch.randint(
-                0,
-                self.noise_scheduler.config.num_train_timesteps,
-                (batch_size,),
-                device=device,
-            ).long()
-
-            noisy_labels = self.noise_scheduler.add_noise(labels, noise, timesteps)
-
-            predicted_noise = self.model(
-                features=features,
-                noisy_labels=noisy_labels,
-                timesteps=timesteps.unsqueeze(1),
-            )
-
-            predictions.append(predicted_noise)
-
-        # Compute ensemble average for improved stability
-        averaged_predictions = torch.stack(predictions).mean(dim=0)
-        return averaged_predictions
-
     def training_step(self, batch, batch_idx):
         """Training step with corrected BCE loss computation."""
         x, y, mask = batch
 
-        # Extract backbone features if specified
         x = self.cnn.extract_features(x)
-
-        # Single timestep forward pass for efficiency
-        # loss, predicted_y = self.forward(x, y, num_timesteps=1)
         predicted_y = self.forward(x, y, num_timesteps=1)
 
         # Compute weighted masked BCE loss
-        loss = weighted_masked_bce_loss(
-            predicted_y,
-            y,
-            mask,
-            pos_weight=self.loss_pos_weight,
-            weighted=self.loss_weighted,
-        )
+        loss = self.loss_fn(predicted_y, y)
 
         self.log("train_loss", loss, prog_bar=True)
-        # self.log("bce_loss", bce_loss, prog_bar=True)
 
         # Compute ROC AUC for training monitoring
         y_true_flat = y[mask.bool()].cpu()  # Fixed: use y instead of predicted_y
@@ -263,17 +138,9 @@ class LightningDiffusionClassifier(BaseModel):
         faux_y = torch.randn(y.shape).to(x.device)
         x = self.cnn.extract_features(x)
 
-        # Multi-timestep sampling for more robust validation predictions
-        # loss, predicted_y = self.forward(x, faux_y, num_timesteps= 1, inference = True)
         predicted_y = self.forward(x, faux_y, num_timesteps=1, inference=True)
-        # Compute validation loss
-        loss = weighted_masked_bce_loss(
-            predicted_y,
-            y,
-            mask,
-            pos_weight=self.loss_pos_weight,
-            weighted=self.loss_weighted,
-        )
+
+        loss = self.loss_fn(predicted_y, y)
 
         self.log("validation_loss", loss, prog_bar=True)
 
@@ -300,16 +167,12 @@ class LightningDiffusionClassifier(BaseModel):
         faux_y = torch.randn(y.shape).to(x.device)
         noise = torch.randn_like(y)
 
-        # loss, y_pred = self.forward(x, faux_y, num_timesteps=1, inference = True)
         y_pred = self.forward(x, faux_y, num_timesteps=1, inference=True)
         bool_mask = mask.bool()
 
-        # Apply masking and prepare for conformal prediction
         y_pred = y_pred[bool_mask].cpu()
         y = y[bool_mask].cpu()
-        # Create a mask for where y == 1
 
-        # Apply conformal prediction thresholds - iterate over each sample
         (
             y_pred_conf,
             y_true_conf,
@@ -382,18 +245,6 @@ class LightningDiffusionClassifier(BaseModel):
             self.alpha,
         )
         print(metrics)
-
-        # # Save metrics to CSV file
-        # if self.results_file:
-        #     metrics_df = pd.DataFrame([metrics])
-        #     metrics_df["alpha"] = self.alpha
-        #     metrics_df["embedding_dim"] = self.embedding_dim
-        #     metrics_df["num_classes"] = self.num_classes
-        #     metrics_df["learning_rate"] = self.lr
-        #     metrics_df["num_inference_timesteps"] = self.num_inference_timesteps
-        #
-        #     metrics_df.to_csv(self.results_file, index=False)
-        #     print(f"Results saved to {self.results_file}")
 
     def _set_thresholds_from_alpha(self):
         """Automatically set thresholds based on alpha parameter."""
