@@ -27,6 +27,7 @@ class LightningDiffusionClassifier(BaseModel):
         residual: bool = True,
         activation_fn: Type[nn.Module] = nn.GELU,
         loss_fn: Type[nn.Module] = nn.BCELoss,
+        masked_loss: bool = False,
         cnn_ckpt_path: Optional[str] = None,
         dropout_rate: float = 0.3,
         num_timesteps: int = 1000,
@@ -43,6 +44,7 @@ class LightningDiffusionClassifier(BaseModel):
 
         self.nonconformity_scores = []
         self.thresholds = None
+        self.masked_loss = masked_loss
 
         self.cnn = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
 
@@ -117,8 +119,10 @@ class LightningDiffusionClassifier(BaseModel):
         x = self.cnn.extract_features(x)
         predicted_y = self.forward(x, y)
 
-        # Compute weighted masked BCE loss
-        loss = self.loss_fn(predicted_y, y)
+        if self.masked_loss:
+            loss = self.loss_fn(predicted_y, y, mask)
+        else:
+            loss = self.loss_fn(predicted_y, y)
 
         self.log("train_loss", loss, prog_bar=True)
 
@@ -144,7 +148,10 @@ class LightningDiffusionClassifier(BaseModel):
 
         predicted_y = self.forward(x, y, inference=True)
 
-        loss = self.loss_fn(predicted_y, y)
+        if self.masked_loss:
+            loss = self.loss_fn(predicted_y, y, mask)
+        else:
+            loss = self.loss_fn(predicted_y, y)
 
         self.log("validation_loss", loss, prog_bar=True)
 

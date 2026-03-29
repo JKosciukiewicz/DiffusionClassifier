@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "diffusers>=0.37.1",
-    "ipykernel>=7.2.0",
     "jsonargparse>=4.27.7",
     "lightning>=2.6.1",
     "matplotlib>=3.10.8",
@@ -29,4 +28,5 @@ exclude = ["scripts*", "_data*", "_generate_mnist*"]
 [dependency-groups]
 dev = [
     "marimo>=0.21.1",
+    "ipykernel>=7.2.0",
 ]

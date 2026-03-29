@@ -526,7 +526,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "diffusers" },
-    { name = "ipykernel" },
     { name = "jsonargparse" },
     { name = "lightning" },
     { name = "matplotlib" },
@@ -540,13 +539,13 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "ipykernel" },
     { name = "marimo" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "diffusers", specifier = ">=0.37.1" },
-    { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "jsonargparse", specifier = ">=4.27.7" },
     { name = "lightning", specifier = ">=2.6.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },
@@ -559,7 +558,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "marimo", specifier = ">=0.21.1" }]
+dev = [
+    { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "marimo", specifier = ">=0.21.1" },
+]
 
 [[package]]
 name = "docutils"
