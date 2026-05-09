@@ -8,6 +8,7 @@ from sklearn.metrics import roc_auc_score
 
 from lightning_models.base_model import BaseModel
 from lightning_models.lightning_cnn import LightningCNN
+from models.clip_extractor import CLIPExtractor
 from models.diffusion_classifier import DiffusionClassifier
 from utils.conformal_prediction import (
     apply_multiclass_thresholds,
@@ -28,7 +29,9 @@ class LightningDiffusionClassifier(BaseModel):
         activation_fn: Type[nn.Module] = nn.GELU,
         loss_fn: Type[nn.Module] = nn.BCELoss,
         masked_loss: bool = False,
+        backbone_type: str = "cnn",
         cnn_ckpt_path: Optional[str] = None,
+        clip_model_name: str = "ViT-B/32",
         dropout_rate: float = 0.3,
         num_timesteps: int = 1000,
     ):
@@ -46,7 +49,16 @@ class LightningDiffusionClassifier(BaseModel):
         self.thresholds = None
         self.masked_loss = masked_loss
 
-        self.cnn = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
+        if backbone_type == "cnn":
+            if cnn_ckpt_path is None:
+                raise ValueError("cnn_ckpt_path must be provided when backbone_type is 'cnn'")
+            self.backbone = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
+        elif backbone_type == "clip":
+            self.backbone = CLIPExtractor(model_name=clip_model_name).eval()
+            # If embedding_dim was not explicitly matched to CLIP, we might have an issue.
+            # However, we'll assume the user passes the correct embedding_dim.
+        else:
+            raise ValueError(f"Unknown backbone type: {backbone_type}")
 
         self.model = DiffusionClassifier(
             num_classes=num_classes,
@@ -116,7 +128,7 @@ class LightningDiffusionClassifier(BaseModel):
         """Training step with corrected BCE loss computation."""
         x, y, mask = batch
 
-        x = self.cnn.extract_features(x)
+        x = self.backbone.extract_features(x)
         predicted_y = self.forward(x, y)
 
         if self.masked_loss:
@@ -144,7 +156,7 @@ class LightningDiffusionClassifier(BaseModel):
     def validation_step(self, batch, batch_idx):
         """Validation step with multi-timestep sampling for robust evaluation."""
         x, y, mask = batch
-        x = self.cnn.extract_features(x)
+        x = self.backbone.extract_features(x)
 
         predicted_y = self.forward(x, y, inference=True)
 
@@ -175,7 +187,7 @@ class LightningDiffusionClassifier(BaseModel):
     def test_step(self, batch, batch_idx):
         """Test step with multi-timestep sampling for final evaluation."""
         x, y, mask = batch
-        x = self.cnn.extract_features(x)
+        x = self.backbone.extract_features(x)
 
         y_pred = self.forward(x, y, inference=True)
         bool_mask = mask.bool()

@@ -9,6 +9,7 @@ from datasets.two_digit_mnist_dataset import TwoDigitMNISTDataset
 class TwoDigitMNISTDataModule(BaseDataModule):
     def __init__(
         self,
+        transform=None,
         batch_size: int = 128,
         data_dir: str = "_data/dual_mnist/raw",
         noise_std: float = 0.3,
@@ -45,9 +46,13 @@ class TwoDigitMNISTDataModule(BaseDataModule):
         self.noise_std = noise_std
         self.use_masked_labels = use_masked_labels
         self.mask_symbol = mask_symbol
+        self.transform = transform
 
         # Training transform: convert image to tensor and add Gaussian noise
-        self.train_transform = torchvision.transforms.Compose(
+        transforms = []
+        if self.transform is not None:
+            transforms.append(self.transform)
+        transforms.extend(
             [
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Lambda(
@@ -55,16 +60,10 @@ class TwoDigitMNISTDataModule(BaseDataModule):
                 ),
             ]
         )
+        self.train_transform = torchvision.transforms.Compose(transforms)
 
         # Validation / test transform: same noise level for consistency
-        self.test_val_transform = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.ToTensor(),
-                torchvision.transforms.Lambda(
-                    lambda x: x + torch.randn_like(x) * self.noise_std
-                ),
-            ]
-        )
+        self.test_val_transform = torchvision.transforms.Compose(transforms)
 
     def _make_dataset(self, split: str, transform) -> TwoDigitMNISTDataset:
         return TwoDigitMNISTDataset(

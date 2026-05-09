@@ -12,13 +12,13 @@ two_digit_mnist_datamodule = TwoDigitMNISTDataModule(
 diffusion = LightningDiffusionClassifier(
     alpha=0.05,
     num_classes=10,
-    embedding_dim=512,  # Use 128 for CNN, 512 for CLIP (ViT-B/32)
+    embedding_dim=128,  # Use 128 for CNN, 512 for CLIP (ViT-B/32)
     lr=1e-4,
     loss_fn=MaskedBCELoss,
     masked_loss=True,
-    backbone_type="clip",  # "cnn" or "clip"
-    # cnn_ckpt_path="checkpoints/mnist_occluded/cnn/cnn-epoch=09-train_loss=0.1351-val_loss=0.3547.ckpt",
-    clip_model_name="ViT-B/32",  # Only needed if backbone_type="clip"
+    backbone_type="cnn",  # "cnn" or "clip"
+    cnn_ckpt_path="checkpoints/mnist_occluded/cnn/cnn-epoch=09-train_loss=0.1351-val_loss=0.3547.ckpt",
+    # clip_model_name="ViT-B/32",  # Only needed if backbone_type="clip"
 )
 
 diffusion.configure_optimizers()
@@ -28,7 +28,7 @@ checkpoint_callback = ModelCheckpoint(
     save_top_k=1,
     monitor="train_loss",
     mode="min",
-    dirpath="./checkpoints/mnist_occluded_masked_clip/diffusion",
+    dirpath="./checkpoints/mnist_occluded_masked_cnn/diffusion",
     filename="diffusion-{epoch:02d}-{train_loss:.4f}-{validation_loss:.4f}",
     every_n_epochs=40,
 )
