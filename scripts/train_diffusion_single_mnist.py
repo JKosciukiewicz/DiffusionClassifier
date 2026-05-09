@@ -1,5 +1,6 @@
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 from torch.nn import CrossEntropyLoss
 from torchvision import transforms
 
@@ -41,8 +42,13 @@ checkpoint_callback = ModelCheckpoint(
     every_n_epochs=10,
 )
 
+logger = WandbLogger(project="diffusion_classifier", name="mnist_occluded_masked_diffusion_1_digit")
+
 trainer = L.Trainer(
-    max_epochs=10, callbacks=[checkpoint_callback], check_val_every_n_epoch=3
+    max_epochs=10, 
+    callbacks=[checkpoint_callback], 
+    check_val_every_n_epoch=3,
+    logger=logger
 )
 trainer.fit(model=diffusion, datamodule=two_digit_mnist_datamodule)
 trainer.test(model=diffusion, datamodule=two_digit_mnist_datamodule)

@@ -1,5 +1,6 @@
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 
 from datamodules.two_digit_mnist_data_module import TwoDigitMNISTDataModule
 from lightning_models import LightningDiffusionClassifier
@@ -33,8 +34,13 @@ checkpoint_callback = ModelCheckpoint(
     every_n_epochs=40,
 )
 
+logger = WandbLogger(project="diffusion_classifier", name="mnist_occluded_masked_clip_diffusion")
+
 trainer = L.Trainer(
-    max_epochs=200, callbacks=[checkpoint_callback], check_val_every_n_epoch=3
+    max_epochs=200, 
+    callbacks=[checkpoint_callback], 
+    check_val_every_n_epoch=3,
+    logger=logger
 )
 trainer.fit(model=diffusion, datamodule=two_digit_mnist_datamodule)
 trainer.test(model=diffusion, datamodule=two_digit_mnist_datamodule)

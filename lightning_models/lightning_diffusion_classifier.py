@@ -18,6 +18,14 @@ from utils.evaluate_conformal_model import calculate_metrics
 torch.manual_seed(42)
 
 
+class IdentityBackbone(nn.Module):
+    def extract_features(self, x):
+        return x
+
+    def forward(self, x):
+        return x
+
+
 class LightningDiffusionClassifier(BaseModel):
     def __init__(
         self,
@@ -34,6 +42,7 @@ class LightningDiffusionClassifier(BaseModel):
         clip_model_name: str = "ViT-B/32",
         dropout_rate: float = 0.3,
         num_timesteps: int = 1000,
+        model_channels: int = 768,
     ):
         super().__init__()
 
@@ -42,6 +51,7 @@ class LightningDiffusionClassifier(BaseModel):
         self.num_classes = num_classes
         self.lr = lr
         self.embedding_dim = embedding_dim
+        self.model_channels = model_channels
 
         self.num_timesteps = num_timesteps
 
@@ -51,18 +61,23 @@ class LightningDiffusionClassifier(BaseModel):
 
         if backbone_type == "cnn":
             if cnn_ckpt_path is None:
-                raise ValueError("cnn_ckpt_path must be provided when backbone_type is 'cnn'")
+                raise ValueError(
+                    "cnn_ckpt_path must be provided when backbone_type is 'cnn'"
+                )
             self.backbone = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
         elif backbone_type == "clip":
             self.backbone = CLIPExtractor(model_name=clip_model_name).eval()
             # If embedding_dim was not explicitly matched to CLIP, we might have an issue.
             # However, we'll assume the user passes the correct embedding_dim.
+        elif backbone_type == "none":
+            self.backbone = IdentityBackbone()
         else:
             raise ValueError(f"Unknown backbone type: {backbone_type}")
 
         self.model = DiffusionClassifier(
             num_classes=num_classes,
             embedding_dim=embedding_dim,
+            model_channels=model_channels,
             dropout_rate=dropout_rate,
             residual=residual,
             activation_fn=activation_fn,

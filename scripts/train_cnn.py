@@ -1,5 +1,6 @@
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 from torchvision import transforms
 
 from datamodules.two_digit_mnist_data_module import TwoDigitMNISTDataModule
@@ -27,8 +28,12 @@ checkpoint_callback = ModelCheckpoint(
     every_n_epochs=2,
 )
 
+logger = WandbLogger(project="diffusion_classifier", name="mnist_occluded_cnn_1_digit")
 
 trainer = L.Trainer(
-    max_epochs=20, callbacks=[checkpoint_callback], check_val_every_n_epoch=2
+    max_epochs=20, 
+    callbacks=[checkpoint_callback], 
+    check_val_every_n_epoch=2,
+    logger=logger
 )
 trainer.fit(model=cnn, datamodule=two_digit_mnist_datamodule)

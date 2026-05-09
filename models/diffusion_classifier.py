@@ -20,6 +20,7 @@ class DiffusionClassifier(nn.Module):
         self,
         num_classes: int,
         embedding_dim: int = 668,
+        model_channels: int = 768,
         dropout_rate: float = 0.2,
         residual: bool = True,
         activation_fn: Type[nn.Module] = nn.GELU,
@@ -33,12 +34,12 @@ class DiffusionClassifier(nn.Module):
         # Class conditioning: features + labels + timesteps
         input_dim = embedding_dim + num_classes + 1
 
-        # Input projection: (embedding_dim + num_classes) -> 768
-        self.input_proj = nn.Linear(input_dim, 768)
-        self.input_norm = nn.LayerNorm(768)
+        # Input projection: (embedding_dim + num_classes) -> model_channels
+        self.input_proj = nn.Linear(input_dim, model_channels)
+        self.input_norm = nn.LayerNorm(model_channels)
 
-        # Main layers: 768 -> 512 -> 256 -> 128 -> num_classes
-        self.fc1 = nn.Linear(768, 512)
+        # Main layers: model_channels -> intermediate dims
+        self.fc1 = nn.Linear(model_channels, 512)
         self.ln1 = nn.LayerNorm(512)
 
         self.fc2 = nn.Linear(512, 256)
@@ -50,7 +51,7 @@ class DiffusionClassifier(nn.Module):
         self.fc4 = nn.Linear(128, num_classes)
 
         if self.residual:
-            self.res_proj1 = nn.Linear(768, 512)
+            self.res_proj1 = nn.Linear(model_channels, 512)
             self.res_proj2 = nn.Linear(512, 256)
             self.res_proj3 = nn.Linear(256, 128)
 
