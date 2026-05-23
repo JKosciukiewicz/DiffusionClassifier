@@ -12,8 +12,9 @@ class BrayDataModule(BaseDataModule):
         data_dir="_data/gigadb",
         cal_split=0.2,
         mask_uncertain=True,
+        treat_uncertain_as_negative=False,
         normalize_features=False,
-        feature_noise_std=0.0,
+        feature_noise_std=0.2,
     ):
         """
         Lightning DataModule for BrayDataset.
@@ -24,6 +25,7 @@ class BrayDataModule(BaseDataModule):
             val_split (float): Validation split ratio from training data
             cal_split (float): Calibration split ratio from training data
             mask_uncertain (bool): Whether to mask uncertain values during training
+            treat_uncertain_as_negative (bool): Whether to treat unknown labels (0) as negative (0)
             normalize_features (bool): Whether to normalize features
             feature_noise_std (float): Standard deviation of noise to add to features during training
         """
@@ -32,12 +34,13 @@ class BrayDataModule(BaseDataModule):
         self.data_dir = data_dir
         self.cal_split = cal_split
         self.mask_uncertain = mask_uncertain
+        self.treat_uncertain_as_negative = treat_uncertain_as_negative
         self.feature_noise_std = feature_noise_std
         self.seed = 42
 
         # Define file paths
-        self.data_file = f"{data_dir}/gigadb.csv"
-        self.labels_file = f"{data_dir}/gigadb_top_30_moas.csv"
+        self.data_file = f"{data_dir}/gigadb_well_level.csv"
+        self.labels_file = f"{data_dir}/gigadb_top_5_moas.csv"
 
         # Define transforms
         self.train_transform = None
@@ -46,8 +49,10 @@ class BrayDataModule(BaseDataModule):
         self._num_classes = None
         self._embedding_dim = None
 
-        print("Bray DM init")
-        print(self.data_file)
+        print(
+            f"Bray DM init (treat_uncertain_as_negative={self.treat_uncertain_as_negative})"
+        )
+        print(f"Data file: {self.data_file}")
 
     def prepare_data(self):
         """
@@ -64,7 +69,7 @@ class BrayDataModule(BaseDataModule):
         Args:
             stage (str): One of 'fit', 'validate', 'test'
         """
-        print("Bray DM setup")
+        print(f"Bray DM setup for stage: {stage}")
         if stage == "fit":
             # Create the full training dataset
             train_split = BrayDataset(
@@ -74,6 +79,8 @@ class BrayDataModule(BaseDataModule):
                 split_value="train",
                 transform=self.train_transform,
                 mask_uncertain=self.mask_uncertain,
+                treat_uncertain_as_negative=self.treat_uncertain_as_negative,
+                noise_std=self.feature_noise_std,
             )
 
             torch.manual_seed(self.seed)
@@ -92,6 +99,8 @@ class BrayDataModule(BaseDataModule):
                 split_value="test",
                 transform=self.test_transform,
                 mask_uncertain=self.mask_uncertain,
+                treat_uncertain_as_negative=self.treat_uncertain_as_negative,
+                noise_std=0,
             )
 
             # Store dimensions
@@ -100,14 +109,6 @@ class BrayDataModule(BaseDataModule):
 
         if stage == "test":
             # Create the test dataset
-            # self.cal_dataset = BrayDataset(
-            #     data_file=self.data_file,
-            #     labels_file=self.labels_file,
-            #     split_column="hier_split",
-            #     split_value="valid",
-            #     transform=self.test_transform,
-            #     mask_uncertain=False,
-            # )
             self.test_dataset = BrayDataset(
                 data_file=self.data_file,
                 labels_file=self.labels_file,
@@ -115,6 +116,7 @@ class BrayDataModule(BaseDataModule):
                 split_value="test",
                 transform=self.test_transform,
                 mask_uncertain=False,
+                treat_uncertain_as_negative=self.treat_uncertain_as_negative,
             )
 
             if self._num_classes is None:

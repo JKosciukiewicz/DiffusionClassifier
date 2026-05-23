@@ -1,5 +1,5 @@
-from sklearn.metrics import accuracy_score, recall_score, f1_score, roc_auc_score
 import numpy as np
+from sklearn.metrics import accuracy_score, f1_score, recall_score, roc_auc_score
 
 
 def calculate_val_metrics(y_true, y_pred, threshold=0.5):
@@ -19,10 +19,10 @@ def calculate_val_metrics(y_true, y_pred, threshold=0.5):
         roc_auc = 0
 
     return {
-        "accuracy": accuracy_score(sure_y_true, binary_pred),
-        "recall": recall_score(sure_y_true, binary_pred),
-        "f1_score": f1_score(sure_y_true, binary_pred),
-        "roc_auc": roc_auc,
+        "val/accuracy": accuracy_score(sure_y_true, binary_pred),
+        "val/recall": recall_score(sure_y_true, binary_pred),
+        "val/f1_score": f1_score(sure_y_true, binary_pred),
+        "val/roc_auc": roc_auc,
     }
 
 
@@ -95,18 +95,18 @@ def calculate_metrics(
         roc_auc = 0
 
     test_results = {
-        "alpha": alpha,
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1,
-        "ROC_AUC": roc_auc,
-        "unthrustworthy_ex": ex_rejected,
-        "unthrustworthy_cls": cls_rejected,
-        "accuracy_bt": accuracy_bt,
-        "precision_bt": precision_bt,
-        "recall_bt": recall_bt,
-        "f1_score_bt": f1_bt,
+        "test/alpha": alpha,
+        "test/accuracy": accuracy,
+        "test/precision": precision,
+        "test/recall": recall,
+        "test/f1_score": f1,
+        "test/roc_auc": roc_auc,
+        # "unthrustworthy_ex": ex_rejected,
+        # "unthrustworthy_cls": cls_rejected,
+        # "accuracy_bt": accuracy_bt,
+        # "precision_bt": precision_bt,
+        # "recall_bt": recall_bt,
+        # "f1_score_bt": f1_bt,
     }
 
     return test_results

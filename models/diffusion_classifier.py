@@ -10,7 +10,7 @@ class DiffusionClassifier(nn.Module):
 
     Args:
         num_classes: Number of output classes
-        embedding_dim: Input feature dimensionality (default: 668 for BBBC)
+        embedding_dim: Input feature dimensionality (num_labels + conditioning_size)
         dropout_rate: Base dropout probability
         residual: Whether to use residual connections
         activation_fn: Activation function class

@@ -6,3 +6,4 @@ diffusionclassifier.egg-info
 lightning_logs
 checkpoints
 _draw
+wandb

@@ -13,10 +13,12 @@ class BrayDataset(Dataset):
         split_value: str = "train",
         transform=None,
         mask_uncertain: bool = True,
+        treat_uncertain_as_negative: bool = False,
+        noise_std: float = 0.0,  # <-- Added parameter for Gaussian noise
     ):
         """
         Memory-optimized dataset for cell morphology features to predict Mechanism of Action (MoA).
-        Uses Polars with lazy frames for efficient loading.
+        Uses Polars with lazy frames and Float32 schema overrides for efficient loading.
 
         Args:
             data_file (str): Path to the CSV file with morphology features
@@ -25,16 +27,21 @@ class BrayDataset(Dataset):
             split_value (str): Value to select from the split column ('train' or 'test')
             transform (callable, optional): Optional transform to be applied on features
             mask_uncertain (bool): If True, mask uncertain values (0) in targets during loss calculation
+            treat_uncertain_as_negative (bool): If True, treat unknown/uncertain labels (0) as negative (0)
+            noise_std (float): Standard deviation of Gaussian noise to add to features. Set to 0.0 for no noise.
         """
         self.transform = transform
         self.mask_uncertain = mask_uncertain
+        self.treat_uncertain_as_negative = treat_uncertain_as_negative
+        self.noise_std = noise_std  # <-- Store noise standard deviation
 
-        print("Loading dataset using Polars lazy frames...")
+        print(
+            f"Loading dataset using Polars (treat_uncertain_as_negative={treat_uncertain_as_negative})..."
+        )
 
         # First, identify MoA columns from labels file using lazy loading
         print("Identifying MoA columns...")
-        labels_lazy = pl.scan_csv(labels_file)
-        labels_schema = labels_lazy.collect_schema()
+        labels_schema = pl.scan_csv(labels_file).collect_schema()
 
         # Find all mechanism of action columns (binary targets)
         self.moa_columns = [
@@ -57,14 +64,20 @@ class BrayDataset(Dataset):
 
         # Identify feature columns from data file using lazy loading
         print("Identifying feature columns...")
-        data_lazy = pl.scan_csv(data_file)
-        data_schema = data_lazy.collect_schema()
+        data_schema = pl.scan_csv(data_file).collect_schema()
 
+        # Strictly use only 'feat_' prefix as per user design
         self.feature_columns = [
-            col
-            for col in data_schema.keys()
-            if col.startswith(("Image_", "Cells_", "Cytoplasm_", "Nuclei_"))
+            col for col in data_schema.keys() if col.startswith("feat_")
         ]
+
+        # Optimization: use schema overrides to load features as Float32 directly
+        # This significantly reduces memory usage during collect()
+        schema_overrides = {col: pl.Float32 for col in self.feature_columns}
+        # Also load MoA columns as Float32 if they exist in the schema
+        for col in self.moa_columns:
+            if col in data_schema:
+                schema_overrides[col] = pl.Float32
 
         # Build the complete query using lazy frames
         print("Building lazy query for efficient data loading...")
@@ -75,12 +88,14 @@ class BrayDataset(Dataset):
             .select(["BROAD_ID", split_column] + self.moa_columns)
             .filter(pl.col(split_column) == split_value)
             .unique(subset=["BROAD_ID"])
+            .fill_null(0)
         )
 
-        # Load and process data
+        # Load and process data with schema overrides and low_memory mode
         data_query = (
-            pl.scan_csv(data_file)
+            pl.scan_csv(data_file, schema_overrides=schema_overrides, low_memory=True)
             .select(["Metadata_broad_sample"] + self.feature_columns)
+            .fill_null(0)
             .rename({"Metadata_broad_sample": "BROAD_ID"})
         )
 
@@ -89,28 +104,31 @@ class BrayDataset(Dataset):
             ["BROAD_ID"] + self.feature_columns + self.moa_columns
         )
 
-        # Execute the query and collect results
-        print("Executing query and loading data...")
-        merged_df = merged_query.collect()
+        # Execute the query and collect results using streaming if possible
+        print("Executing query and loading data (using streaming)...")
+        merged_df = merged_query.collect(streaming=True)
 
         print(f"Loaded {len(merged_df)} samples")
 
-        # Convert to numpy arrays for efficient storage
+        # Convert to numpy arrays and immediately free memory
         print("Converting to numpy arrays...")
-        features_array = (
-            merged_df.select(self.feature_columns).to_numpy().astype(np.float32)
-        )
-        targets_raw_array = (
-            merged_df.select(self.moa_columns).to_numpy().astype(np.float32)
-        )
+        features_array = merged_df.select(self.feature_columns).to_numpy()
+        targets_raw_array = merged_df.select(self.moa_columns).to_numpy()
+
+        # Explicitly delete the DataFrame to free memory before calculating statistics
+        del merged_df
 
         # Create masks for uncertain values (0)
-        if self.mask_uncertain:
+        if self.treat_uncertain_as_negative:
+            # If we treat uncertain as negative, we don't need to mask them out
+            masks_array = np.ones_like(targets_raw_array, dtype=np.float32)
+        elif self.mask_uncertain:
             masks_array = (targets_raw_array != 0).astype(np.float32)
         else:
             masks_array = np.ones_like(targets_raw_array, dtype=np.float32)
 
         # Convert -1 to 0 for target values (binary classification)
+        # 0 (uncertain) also stays 0, which is treated as negative if not masked
         targets_array = np.where(targets_raw_array < 0, 0, targets_raw_array)
 
         # Store data as numpy arrays
@@ -119,30 +137,27 @@ class BrayDataset(Dataset):
         self.masks_data = masks_array
 
         # Calculate target distribution statistics
-        self._calculate_target_statistics(targets_raw_array)
+        # self._calculate_target_statistics(targets_raw_array)
 
-        print(f"Dataset loaded with {len(self.features_data)} samples")
-        print(f"Feature dimension: {len(self.feature_columns)}")
-        print(f"Target dimension: {len(self.moa_columns)}")
+        # print(f"Dataset loaded with {len(self.features_data)} samples")
+        # print(f"Feature dimension: {len(self.feature_columns)}")
+        # print(f"Target dimension: {len(self.moa_columns)}")
 
     def __len__(self) -> int:
         return len(self.features_data)
 
     def _calculate_target_statistics(self, targets_raw_array):
         """Calculate target distribution statistics from raw targets array."""
-        # Initialize counters for target values
         self.target_counts = {
             "ones": np.zeros(len(self.moa_columns), dtype=np.int32),
             "zeros": np.zeros(len(self.moa_columns), dtype=np.int32),
             "uncertain": np.zeros(len(self.moa_columns), dtype=np.int32),
         }
 
-        # Dictionary to store counts by MoA name
         self.moa_target_counts = {
             moa: {"ones": 0, "zeros": 0, "uncertain": 0} for moa in self.moa_columns
         }
 
-        # Count occurrences of each value in the raw targets
         for i, moa_name in enumerate(self.moa_columns):
             col_data = targets_raw_array[:, i]
             ones_count = np.sum(col_data == 1)
@@ -157,14 +172,12 @@ class BrayDataset(Dataset):
             self.moa_target_counts[moa_name]["zeros"] = zeros_count
             self.moa_target_counts[moa_name]["uncertain"] = uncertain_count
 
-        # Calculate total counts
         total_samples = len(targets_raw_array)
         self.total_targets = total_samples * len(self.moa_columns)
         self.total_ones = np.sum(self.target_counts["ones"])
         self.total_zeros = np.sum(self.target_counts["zeros"])
         self.total_uncertain = np.sum(self.target_counts["uncertain"])
 
-        # Print target distribution summary
         print("Target Distribution Summary:")
         print(f"Total target values: {self.total_targets}")
         print(
@@ -177,14 +190,12 @@ class BrayDataset(Dataset):
             f"Total uncertain: {self.total_uncertain} ({(self.total_uncertain / self.total_targets) * 100:.2f}%)"
         )
 
-        # Calculate overall class imbalance ratio
         if self.total_zeros > 0:
             imbalance_ratio = self.total_ones / self.total_zeros
             print(f"Positive-to-Negative ratio: {imbalance_ratio:.4f}")
 
     def __getitem__(self, idx: int) -> tuple:
         """Get a sample from the dataset."""
-        # Get precomputed features, targets and mask
         features = self.features_data[idx]
         targets = self.targets_data[idx]
         mask = self.masks_data[idx]
@@ -194,6 +205,11 @@ class BrayDataset(Dataset):
         targets = torch.tensor(targets, dtype=torch.float32)
         mask = torch.tensor(mask, dtype=torch.float32)
 
+        # <-- Added: Inject Gaussian Noise if noise_std is greater than 0
+        if self.noise_std > 0:
+            # Adds noise sampled from N(0, noise_std^2) matching the shape of the features
+            features = features + torch.randn_like(features) * self.noise_std
+
         # Apply transform if specified
         if self.transform:
             features = self.transform(features)
@@ -201,16 +217,12 @@ class BrayDataset(Dataset):
         return features, targets, mask
 
     def get_feature_names(self):
-        """Returns a list of all feature column names"""
         return self.feature_columns
 
     def get_target_names(self):
-        """Returns a list of all MoA target names"""
         return self.moa_columns
 
     def get_stats(self):
-        """Returns basic statistics about the dataset"""
-        # Count positive examples per MoA
         positive_counts = {}
         for i, moa in enumerate(self.moa_columns):
             positive_counts[moa] = np.sum(self.targets_data[:, i] > 0)
@@ -248,8 +260,6 @@ class BrayDataset(Dataset):
         return stats
 
     def get_target_distribution(self):
-        """Returns detailed target distribution statistics"""
-        # Calculate imbalance ratios for each MoA
         moa_imbalance = {}
         for moa in self.moa_columns:
             ones = self.moa_target_counts[moa]["ones"]
@@ -265,7 +275,6 @@ class BrayDataset(Dataset):
                 ),
             }
 
-        # Sort by imbalance ratio (most imbalanced first)
         sorted_moa = sorted(
             moa_imbalance.items(), key=lambda x: x[1]["ratio"], reverse=True
         )
@@ -289,38 +298,3 @@ class BrayDataset(Dataset):
             },
             "per_moa": dict(sorted_moa),
         }
-
-
-# if __name__ == "__main__":
-#     # Create training dataset
-#     train_dataset = BrayDataset(
-#         data_file="_data/gigadb/gigadb.csv",
-#         labels_file="_data/gigadb/gigadb_MoA_with_images_filtered_25.csv",
-#         split_column="hier_split",
-#         split_value="train",
-#     )
-
-#     # Create test dataset
-#     test_dataset = BrayDataset(
-#         data_file="_data/gigadb/gigadb.csv",
-#         labels_file="_data/gigadb/gigadb_MoA_with_images_filtered_25.csv",
-#         split_column="hier_split",
-#         split_value="test",
-#     )
-
-#     # Print the lengths of both datasets
-#     print("Dataset Sizes:")
-#     print(f"Training set size: {len(train_dataset)} samples")
-#     print(f"Test set size: {len(test_dataset)} samples")
-
-#     # Print more detailed statistics if needed
-#     train_stats = train_dataset.get_stats()
-#     test_stats = test_dataset.get_stats()
-
-#     print("\nTraining Set Features:")
-#     print(f"Number of features: {train_stats['num_features']}")
-#     print(f"Number of target MoAs: {train_stats['num_targets']}")
-
-#     print("\nTest Set Features:")
-#     print(f"Number of features: {test_stats['num_features']}")
-#     print(f"Number of target MoAs: {test_stats['num_targets']}")

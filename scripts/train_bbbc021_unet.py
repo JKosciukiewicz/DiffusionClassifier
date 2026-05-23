@@ -1,0 +1,51 @@
+import lightning as L
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+
+from datamodules.bbbc021_data_module import BBBC021DataModule
+from lightning_models.lightning_diffusion_classifier import LightningDiffusionClassifier
+from loss.masked_bce_loss import MaskedBCELoss
+
+bbbc021_datamodule = BBBC021DataModule(
+    batch_size=128, data_dir="_data/BBBC021", mask_uncertain=True
+)
+bbbc021_datamodule.setup("fit")
+
+num_classes = bbbc021_datamodule.num_classes
+embedding_dim = bbbc021_datamodule.embedding_dim
+model_channels = 64  # Good starting point for UNet
+
+print(f"Num classes: {num_classes}, Embedding dim: {embedding_dim}")
+
+diffusion = LightningDiffusionClassifier(
+    alpha=0.5,
+    num_classes=num_classes,
+    embedding_dim=embedding_dim,
+    model_channels=model_channels,
+    lr=1e-4,
+    loss_fn=MaskedBCELoss,
+    masked_loss=True,
+    backbone_type="none",  # Use "none" for pre-extracted features
+    use_unet=True,
+)
+
+checkpoint_callback = ModelCheckpoint(
+    save_top_k=1,
+    monitor="val_ROC_AUC",  # Fixed: case sensitivity
+    mode="max",
+    dirpath="./checkpoints/bbbc021/diffusion_unet",
+    filename="diffusion_unet-{epoch:02d}-{val_ROC_AUC:.4f}",
+)
+
+logger = WandbLogger(project="Diffusion Classifier", name="diffusion_bbbc021_unet_run_01")
+
+trainer = L.Trainer(
+    max_epochs=50,
+    callbacks=[checkpoint_callback],
+    check_val_every_n_epoch=1,
+    logger=logger,
+)
+
+if __name__ == "__main__":
+    trainer.fit(model=diffusion, datamodule=bbbc021_datamodule)
+    trainer.test(model=diffusion, datamodule=bbbc021_datamodule)

@@ -4,16 +4,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers import DDPMScheduler
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 
 from lightning_models.base_model import BaseModel
+from lightning_models.lightning_autoencoder import LightningAutoencoder
 from lightning_models.lightning_cnn import LightningCNN
 from models.clip_extractor import CLIPExtractor
-from models.diffusion_classifier import DiffusionClassifier
-from utils.conformal_prediction import (
-    apply_multiclass_thresholds,
-)
-from utils.evaluate_conformal_model import calculate_metrics
+from models.diffusion_autoencoder import DiffusionAutoencoder
 
 torch.manual_seed(42)
 
@@ -35,10 +38,11 @@ class LightningDiffusionClassifier(BaseModel):
         alpha: float,
         residual: bool = True,
         activation_fn: Type[nn.Module] = nn.GELU,
-        loss_fn: Type[nn.Module] = nn.BCELoss,
+        loss_fn: Optional[Type[nn.Module]] = None,
+        objective: str = "noise",  # "noise" or "labels"
         masked_loss: bool = False,
-        backbone_type: str = "cnn",
-        cnn_ckpt_path: Optional[str] = None,
+        backbone_type: str = "none",
+        backbone_ckpt_path: Optional[str] = None,
         clip_model_name: str = "ViT-B/32",
         dropout_rate: float = 0.3,
         num_timesteps: int = 1000,
@@ -52,6 +56,7 @@ class LightningDiffusionClassifier(BaseModel):
         self.lr = lr
         self.embedding_dim = embedding_dim
         self.model_channels = model_channels
+        self.objective = objective
 
         self.num_timesteps = num_timesteps
 
@@ -60,41 +65,46 @@ class LightningDiffusionClassifier(BaseModel):
         self.masked_loss = masked_loss
 
         if backbone_type == "cnn":
-            if cnn_ckpt_path is None:
+            if backbone_ckpt_path is None:
                 raise ValueError(
                     "cnn_ckpt_path must be provided when backbone_type is 'cnn'"
                 )
-            self.backbone = LightningCNN.load_from_checkpoint(cnn_ckpt_path).eval()
+            self.backbone = LightningCNN.load_from_checkpoint(backbone_ckpt_path).eval()
+        elif backbone_type == "autoencoder":
+            if backbone_ckpt_path is None:
+                raise ValueError(
+                    "autoencoder_ckpt_path must be provided when backbone_type is 'autoencoder'"
+                )
+            self.backbone = LightningAutoencoder.load_from_checkpoint(
+                backbone_ckpt_path
+            ).eval()
         elif backbone_type == "clip":
             self.backbone = CLIPExtractor(model_name=clip_model_name).eval()
-            # If embedding_dim was not explicitly matched to CLIP, we might have an issue.
-            # However, we'll assume the user passes the correct embedding_dim.
         elif backbone_type == "none":
             self.backbone = IdentityBackbone()
         else:
             raise ValueError(f"Unknown backbone type: {backbone_type}")
 
-        self.model = DiffusionClassifier(
-            num_classes=num_classes,
-            embedding_dim=embedding_dim,
-            model_channels=model_channels,
+        self.model = DiffusionAutoencoder(
+            feature_dim=self.embedding_dim,
+            label_dim=self.num_classes,
             dropout_rate=dropout_rate,
-            residual=residual,
-            activation_fn=activation_fn,
+            use_sigmoid=(objective == "labels"),
         )
 
-        self.loss_fn = loss_fn()
+        if loss_fn is not None:
+            self.loss_fn = loss_fn()
+        else:
+            # FIX: Switched to MSE for both since targets are scaled to [-1, 1]
+            self.loss_fn = nn.MSELoss()
 
+        # FIX: Switched to cosine schedule to retain small-vector label context
         self.noise_scheduler = DDPMScheduler(
             num_train_timesteps=self.num_timesteps, beta_schedule="squaredcos_cap_v2"
         )
 
-        self.y_pred_conf = []
+        self.y_pred = []
         self.y_true = []
-        self.y_pred_conf_bt = []
-        self.y_true_bt = []
-        self.ex_rejected = 0
-        self.cls_rejected = 0
 
         # ROC AUC tracking
         self.peak_roc_auc = 0
@@ -103,96 +113,146 @@ class LightningDiffusionClassifier(BaseModel):
     def forward(
         self,
         features: torch.Tensor,
-        labels: torch.Tensor,
-        inference=False,
+        noisy_labels: torch.Tensor,
+        timesteps: torch.Tensor,
     ) -> torch.Tensor:
-        batch_size = labels.shape[0]
-        device = labels.device
-        noise = torch.randn_like(labels)
+        """Forward pass to predict noise or labels."""
+        return self.model(
+            features=features,
+            noisy_labels=noisy_labels,
+            timesteps=timesteps.unsqueeze(1) if timesteps.ndim == 1 else timesteps,
+        )
 
-        if inference:
-            # Inference -> label = gaussian noise, timestep = max possible timestep
+    def predict_labels(
+        self, features: torch.Tensor, num_steps: Optional[int] = None
+    ) -> torch.Tensor:
+        """Iterative DDPM generation loop to retrieve target probabilities."""
+        device = features.device
+        batch_size = features.shape[0]
+
+        # FIX: Default to full timesteps loop to keep strict DDPM variance math intact
+        if num_steps is None:
+            num_steps = self.num_timesteps
+
+        if self.objective == "labels":
+            # Direct prediction pass
             timesteps = torch.full(
                 (batch_size,),
-                self.num_timesteps,
+                self.num_timesteps - 1,
                 device=device,
                 dtype=torch.long,
             )
-            noisy_labels = torch.rand_like(labels).to(features.device)
-        else:
-            # Training -> label with random noise added based on the timestep, timestep selected randomly
-            timesteps = torch.randint(
-                0,
-                self.num_timesteps,
-                (batch_size,),
-                device=device,
-            ).long()
-            noisy_labels = self.noise_scheduler.add_noise(labels, noise, timesteps)
+            noisy_labels = torch.randn((batch_size, self.num_classes), device=device)
+            pred = self.forward(features, noisy_labels, timesteps)
+            # FIX: Unscale direct prediction back to [0, 1] bounds
+            return torch.clamp((pred + 1.0) / 2.0, 0.0, 1.0)
 
-        # Predict added noise using the model
-        predicted_noise = self.model(
-            features=features,
-            noisy_labels=noisy_labels,
-            timesteps=timesteps.unsqueeze(1),
-        )
+        # Start from pure Gaussian noise
+        y_t = torch.randn((batch_size, self.num_classes), device=device)
 
-        # Reconstruct clean labels via denoising
-        return predicted_noise
+        self.noise_scheduler.set_timesteps(num_steps, device=device)
+
+        for t in self.noise_scheduler.timesteps:
+            # Predict noise residual
+            predicted_noise = self.forward(features, y_t, t.expand(batch_size))
+
+            # Standard DDPM reverse tracking step
+            y_t = self.noise_scheduler.step(predicted_noise, t, y_t).prev_sample
+
+        # FIX: Map from [-1, 1] back into [0, 1] probability space
+        y_unscaled = (y_t + 1.0) / 2.0
+        return torch.clamp(y_unscaled, 0.0, 1.0)
+
 
     def training_step(self, batch, batch_idx):
-        """Training step with corrected BCE loss computation."""
         x, y, mask = batch
-
         x = self.backbone.extract_features(x)
-        predicted_y = self.forward(x, y)
-
-        if self.masked_loss:
-            loss = self.loss_fn(predicted_y, y, mask)
-        else:
-            loss = self.loss_fn(predicted_y, y)
-
-        self.log("train_loss", loss, prog_bar=True)
-
-        # Compute ROC AUC for training monitoring
-        y_true_flat = y[mask.bool()].cpu()  # Fixed: use y instead of predicted_y
-        y_pred_flat = predicted_y[mask.bool()].cpu()
-
-        if len(y_true_flat) > 0 and len(torch.unique(y_true_flat)) > 1:
-            try:
-                roc_auc = roc_auc_score(
-                    y_true_flat.detach().numpy(), y_pred_flat.detach().numpy()
+        
+        # Apply Feature Dropout to prevent conditioning blindness
+        # Forces the model to not rely on exact feature maps if it overfits
+        x = torch.nn.functional.dropout(x, p=0.1, training=self.training)
+        
+        y_scaled = y * 2.0 - 1.0
+        noise = torch.randn_like(y_scaled)
+        timesteps = torch.randint(
+            0, self.num_timesteps, (y.shape[0],), device=y.device
+        ).long()
+        
+        noisy_y = self.noise_scheduler.add_noise(y_scaled, noise, timesteps)
+        prediction = self.forward(x, noisy_y, timesteps)
+        
+        target = y_scaled if self.objective == "labels" else noise
+        loss = self.loss_fn(prediction, target)
+        self.log("train/loss", loss, prog_bar=True)
+        
+        # Monitor ROC AUC cleanly without the Tweedie Illusion
+        with torch.no_grad():
+            # ONLY evaluate training ROC AUC when noise is heavy (high t)
+            # This prevents the ground-truth leakage at low t
+            high_noise_mask = timesteps > (self.num_timesteps // 2)
+        
+            if high_noise_mask.sum() > 0 and self.objective == "noise":
+                alpha_prod_t = (
+                    self.noise_scheduler.alphas_cumprod[timesteps].to(y.device).view(-1, 1)
                 )
-                self.log("train_roc_auc", roc_auc, prog_bar=True)
-            except ValueError:
-                pass
-
+                pred_y0 = (
+                    noisy_y - torch.sqrt(1 - alpha_prod_t) * prediction
+                ) / torch.sqrt(alpha_prod_t)
+                pred_y0_unscaled = torch.clamp((pred_y0 + 1.0) / 2.0, 0.0, 1.0)
+        
+                y_true_flat = y[high_noise_mask].cpu()
+                y_pred_flat = pred_y0_unscaled[high_noise_mask].cpu()
+        
+                if len(torch.unique(y_true_flat)) > 1:
+                    roc_auc = roc_auc_score(y_true_flat.numpy(), y_pred_flat.numpy())
+                    self.log("train/roc_auc_heavy_noise", roc_auc, prog_bar=True)
+    
         return loss
 
     def validation_step(self, batch, batch_idx):
-        """Validation step with multi-timestep sampling for robust evaluation."""
+        """Validation step computing objective loss and tracking full loop ROC AUC."""
         x, y, mask = batch
         x = self.backbone.extract_features(x)
 
-        predicted_y = self.forward(x, y, inference=True)
+        # FIX: Map targets to [-1, 1] range
+        y_scaled = y * 2.0 - 1.0
 
-        if self.masked_loss:
-            loss = self.loss_fn(predicted_y, y, mask)
+        noise = torch.randn_like(y_scaled)
+        timesteps = torch.randint(
+            0, self.num_timesteps, (y.shape[0],), device=y.device
+        ).long()
+        noisy_y = self.noise_scheduler.add_noise(y_scaled, noise, timesteps)
+        prediction = self.forward(x, noisy_y, timesteps)
+
+        if self.objective == "labels":
+            target = y_scaled
         else:
-            loss = self.loss_fn(predicted_y, y)
+            target = noise
 
-        self.log("validation_loss", loss, prog_bar=True)
+        if self.objective == "labels":
+            if self.masked_loss:
+                loss = self.loss_fn(prediction, target, mask)
+            else:
+                loss = self.loss_fn(prediction, target)
+        else:
+            loss = self.loss_fn(prediction, target)
 
-        # Move tensors to CPU for metric computation
-        mask = mask.cpu()
+        self.log("val/loss", loss, prog_bar=True)
+
+        # FIX: Force execution across full DDPM timesteps range to maintain variance tracking accuracy
+        predicted_y = self.predict_labels(x, num_steps=self.num_timesteps / 100)
+
+        mask_cpu = mask.cpu()
         y_true = y.cpu()
         y_pred = predicted_y.cpu()
-        y_true_flat = y_true[mask.bool()]
-        y_pred_flat = y_pred[mask.bool()]
+        mask_bool = mask_cpu.bool()
+        y_true_flat = y_true[mask_bool]
+        y_pred_flat = y_pred[mask_bool]
 
         if len(y_true_flat) > 0 and len(torch.unique(y_true_flat)) > 1:
             try:
                 roc_auc = roc_auc_score(y_true_flat.numpy(), y_pred_flat.numpy())
-                self.log("validation_roc_auc", roc_auc, prog_bar=True)
+                self.log("val/roc_auc", roc_auc, prog_bar=True)
                 self.roc_aucs.append(roc_auc)
             except ValueError:
                 pass
@@ -200,88 +260,64 @@ class LightningDiffusionClassifier(BaseModel):
         return loss
 
     def test_step(self, batch, batch_idx):
-        """Test step with multi-timestep sampling for final evaluation."""
+        """Test step with complete reverse chain processing."""
         x, y, mask = batch
         x = self.backbone.extract_features(x)
 
-        y_pred = self.forward(x, y, inference=True)
-        bool_mask = mask.bool()
+        # FIX: Execute complete DDPM processing chain
+        predicted_y = self.predict_labels(x, num_steps=self.num_timesteps / 10)
+        mask_bool = mask.bool()
 
-        y_pred = y_pred[bool_mask].cpu()
-        y = y[bool_mask].cpu()
+        y_pred_flat = predicted_y[mask_bool].cpu()
+        y_true_flat = y[mask_bool].cpu()
 
-        (
-            y_pred_conf,
-            y_true_conf,
-            ex_rejected,
-            cls_rejected,
-            y_pred_bt,
-            y_true_bt,
-        ) = apply_multiclass_thresholds(y_pred, y, self.thresholds)
-
-        self.y_true.append(y_true_conf)
-        self.y_pred_conf.append(y_pred_conf)
-        self.ex_rejected += ex_rejected
-        self.cls_rejected += cls_rejected
-        self.y_true_bt.append(y_true_bt)
-        self.y_pred_conf_bt.append(y_pred_bt)
+        self.y_true.append(y_true_flat)
+        self.y_pred.append(y_pred_flat)
 
     def on_fit_end(self):
-        """Called when fit ends - automatically set thresholds based on alpha."""
-        self._set_thresholds_from_alpha()
+        pass
 
     def on_test_start(self):
-        """Called when test starts - ensure thresholds are set."""
-        if self.thresholds is None:
-            self._set_thresholds_from_alpha()
+        self.reset_params()
 
-    def on_validation_start(self) -> None:
-        """Initialize validation tracking."""
+    def on_validation_epoch_start(self) -> None:
         self.roc_aucs = []
-        self._set_thresholds_from_alpha()
 
-    def on_validation_end(self):
-        """Track peak validation performance."""
-        mean_roc_auc = np.mean(np.array(self.roc_aucs)) if self.roc_aucs else 0
-        if mean_roc_auc > self.peak_roc_auc:
-            self.peak_roc_auc = mean_roc_auc
-            self.logger.log_metrics(
-                {"peak_roc_auc": self.peak_roc_auc}, step=self.current_epoch
-            )
-            self.logger.log_metrics(
-                {"peak_roc_auc_epoch": self.current_epoch}, step=self.current_epoch
-            )
+    def on_validation_epoch_end(self):
+        pass
 
     def on_test_epoch_end(self):
-        """Compute and save final test metrics."""
-        metrics = calculate_metrics(
-            self.y_true,
-            self.y_pred_conf,
-            self.y_true_bt,
-            self.y_pred_conf_bt,
-            self.ex_rejected,
-            self.cls_rejected,
-            self.alpha,
-        )
-        print(metrics)
+        """Gather accumulated batches and extract global test scoring."""
+        y_true = torch.cat(self.y_true).numpy()
+        y_pred = torch.cat(self.y_pred).numpy()
 
-    def _set_thresholds_from_alpha(self):
-        """Automatically set thresholds based on alpha parameter."""
-        self.thresholds = np.ones(self.num_classes) * (1 - self.alpha)
+        metrics = {}
+        if len(y_true) > 0 and len(np.unique(y_true)) > 1:
+            try:
+                # Standard binary mapping via middle threshold cutoff
+                y_pred_binary = (y_pred > 0.5).astype(np.float32)
 
-    def set_thresholds(self, thresholds):
-        """Manual override for thresholds if needed."""
-        self.thresholds = thresholds
+                metrics["test/roc_auc"] = roc_auc_score(y_true, y_pred)
+                metrics["test/accuracy"] = accuracy_score(y_true, y_pred_binary)
+                metrics["test/precision"] = precision_score(
+                    y_true, y_pred_binary, zero_division=0
+                )
+                metrics["test/recall"] = recall_score(
+                    y_true, y_pred_binary, zero_division=0
+                )
+                metrics["test/f1_score"] = f1_score(
+                    y_true, y_pred_binary, zero_division=0
+                )
+
+            except Exception as e:
+                print(f"Error calculating metrics: {e}")
+
+        print(f"Test Metrics: {metrics}")
+        self.log_dict(metrics)
 
     def configure_optimizers(self):
-        """Configure Adam optimizer for training."""
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
     def reset_params(self):
-        """Reset evaluation parameters for new test run."""
-        self.y_pred_conf = []
+        self.y_pred = []
         self.y_true = []
-        self.y_pred_conf_bt = []
-        self.y_true_bt = []
-        self.ex_rejected = 0
-        self.cls_rejected = 0
