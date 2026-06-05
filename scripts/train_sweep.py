@@ -11,7 +11,7 @@ sweep_config = {
     "method": "grid",  # Tries every combination
     "metric": {"name": "val/roc_auc", "goal": "maximize"},
     "parameters": {
-        "num_blocks": {"values": [4, 8, 12]},
+        "num_blocks": {"values": [2, 4, 8, 12]},
         "lr": {"values": [1e-3, 1e-4, 1e-5]},
         "t_power": {"values": [1.0, 2.0]},
     },
@@ -89,4 +89,4 @@ if __name__ == "__main__":
 
     # 4. Start the agent locally to run through the grid
     # count=18 means it will execute exactly the 18 combinations (3 * 3 * 2) and then exit
-    wandb.agent(sweep_id, function=sweep_train_step, count=18)
+    wandb.agent(sweep_id, function=sweep_train_step, count=24)
