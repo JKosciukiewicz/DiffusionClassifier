@@ -68,7 +68,7 @@ def sweep_train_step():
 
     # Setup logger to hook into the current sweep run
     logger = WandbLogger(
-        project="flow_matching",
+        project="flow_matching_top_30_sweeps",
         name=f"bray_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}",
     )
 
