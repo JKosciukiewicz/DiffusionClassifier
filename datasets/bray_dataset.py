@@ -15,6 +15,7 @@ class BrayDataset(Dataset):
         mask_uncertain: bool = True,
         treat_uncertain_as_negative: bool = False,
         noise_std: float = 0.0,  # <-- Added parameter for Gaussian noise
+        ternary_labels: bool = False,
     ):
         """
         Memory-optimized dataset for cell morphology features to predict Mechanism of Action (MoA).
@@ -29,11 +30,14 @@ class BrayDataset(Dataset):
             mask_uncertain (bool): If True, mask uncertain values (0) in targets during loss calculation
             treat_uncertain_as_negative (bool): If True, treat unknown/uncertain labels (0) as negative (0)
             noise_std (float): Standard deviation of Gaussian noise to add to features. Set to 0.0 for no noise.
+            ternary_labels (bool): If True, return labels as -1 (negative), 0 (unknown), 1 (positive).
+                                   Mask is always set to known entries only (labels != 0).
         """
         self.transform = transform
         self.mask_uncertain = mask_uncertain
         self.treat_uncertain_as_negative = treat_uncertain_as_negative
         self.noise_std = noise_std  # <-- Store noise standard deviation
+        self.ternary_labels = ternary_labels
 
         print(
             f"Loading dataset using Polars (treat_uncertain_as_negative={treat_uncertain_as_negative})..."
@@ -119,17 +123,22 @@ class BrayDataset(Dataset):
         del merged_df
 
         # Create masks for uncertain values (0)
-        if self.treat_uncertain_as_negative:
-            # If we treat uncertain as negative, we don't need to mask them out
+        if self.ternary_labels:
+            # Ternary mode: always mask unknown (0) entries; known = -1 or 1
+            masks_array = (targets_raw_array != 0).astype(np.float32)
+        elif self.treat_uncertain_as_negative:
             masks_array = np.ones_like(targets_raw_array, dtype=np.float32)
         elif self.mask_uncertain:
             masks_array = (targets_raw_array != 0).astype(np.float32)
         else:
             masks_array = np.ones_like(targets_raw_array, dtype=np.float32)
 
-        # Convert -1 to 0 for target values (binary classification)
-        # 0 (uncertain) also stays 0, which is treated as negative if not masked
-        targets_array = np.where(targets_raw_array < 0, 0, targets_raw_array)
+        if self.ternary_labels:
+            # Keep raw values: -1 (negative), 0 (unknown), 1 (positive)
+            targets_array = targets_raw_array.astype(np.float32)
+        else:
+            # Convert -1 to 0 for target values (binary classification)
+            targets_array = np.where(targets_raw_array < 0, 0, targets_raw_array)
 
         # Store data as numpy arrays
         self.features_data = features_array

@@ -10,11 +10,13 @@ class BrayDataModule(BaseDataModule):
         self,
         batch_size=64,
         data_dir="_data/gigadb",
+        label_file=None,
         cal_split=0.2,
         mask_uncertain=True,
         treat_uncertain_as_negative=False,
         normalize_features=False,
         feature_noise_std=0.2,
+        ternary_labels=False,
     ):
         """
         Lightning DataModule for BrayDataset.
@@ -28,6 +30,7 @@ class BrayDataModule(BaseDataModule):
             treat_uncertain_as_negative (bool): Whether to treat unknown labels (0) as negative (0)
             normalize_features (bool): Whether to normalize features
             feature_noise_std (float): Standard deviation of noise to add to features during training
+            ternary_labels (bool): If True, labels are -1/0/1 instead of 0/1; mask covers unknown entries.
         """
         super().__init__()
         self.batch_size = batch_size
@@ -36,11 +39,14 @@ class BrayDataModule(BaseDataModule):
         self.mask_uncertain = mask_uncertain
         self.treat_uncertain_as_negative = treat_uncertain_as_negative
         self.feature_noise_std = feature_noise_std
+        self.ternary_labels = ternary_labels
         self.seed = 42
 
         # Define file paths
         self.data_file = f"{data_dir}/gigadb_well_level.csv"
-        self.labels_file = f"{data_dir}/gigadb_top_5_moas.csv"
+        self.labels_file = (
+            label_file if label_file else f"{data_dir}/gigadb_top_30_moas.csv"
+        )
 
         # Define transforms
         self.train_transform = None
@@ -81,6 +87,7 @@ class BrayDataModule(BaseDataModule):
                 mask_uncertain=self.mask_uncertain,
                 treat_uncertain_as_negative=self.treat_uncertain_as_negative,
                 noise_std=self.feature_noise_std,
+                ternary_labels=self.ternary_labels,
             )
 
             torch.manual_seed(self.seed)
@@ -101,6 +108,7 @@ class BrayDataModule(BaseDataModule):
                 mask_uncertain=self.mask_uncertain,
                 treat_uncertain_as_negative=self.treat_uncertain_as_negative,
                 noise_std=0,
+                ternary_labels=self.ternary_labels,
             )
 
             # Store dimensions
@@ -117,6 +125,7 @@ class BrayDataModule(BaseDataModule):
                 transform=self.test_transform,
                 mask_uncertain=False,
                 treat_uncertain_as_negative=self.treat_uncertain_as_negative,
+                ternary_labels=self.ternary_labels,
             )
 
             if self._num_classes is None:

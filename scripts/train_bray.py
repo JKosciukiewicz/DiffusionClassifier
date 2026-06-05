@@ -8,11 +8,13 @@ from lightning_models.lightning_diffusion_classifier import LightningDiffusionCl
 from loss.masked_bce_loss import MaskedBCELoss
 
 bray_datamodule = BrayDataModule(
-    batch_size=16,
+    batch_size=64,
     data_dir="_data/gigadb",
-    mask_uncertain=True,
+    label_file="/Users/jkosciukiewicz/Developer/Research/DiffusionClassifier/_data/gigadb/gigadb_top_5_moas.csv",
+    mask_uncertain=False,
     treat_uncertain_as_negative=True,
-    feature_noise_std=0.3,
+    feature_noise_std=0.0,
+    ternary_labels=False,
 )
 # bray_datamodule.setup("fit")
 
@@ -28,8 +30,9 @@ diffusion = LightningDiffusionClassifier(
     objective="noise",
     lr=1e-4,
     # loss_fn=MaskedBCELoss,
-    masked_loss=True,  # false with uncertain as negative, true otherwise (impacts how metrics are calculated)
+    masked_loss=False,  # false with uncertain as negative, true otherwise (impacts how metrics are calculated)
     backbone_type="none",  # Use "none" for pre-extracted features
+    ternary_labels=True,
 )
 
 checkpoint_callback = ModelCheckpoint(
@@ -41,12 +44,12 @@ checkpoint_callback = ModelCheckpoint(
 )
 
 logger = WandbLogger(
-    project="diffusion_bray",
-    name="diffusion_bray_mse",
+    project="diffusion_bray_top_5",
+    name="diffusion_bray_mse_bs_64",
 )
 
 trainer = L.Trainer(
-    max_epochs=100,
+    max_epochs=200,
     callbacks=[checkpoint_callback],
     check_val_every_n_epoch=5,
     logger=logger,
