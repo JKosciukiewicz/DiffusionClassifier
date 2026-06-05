@@ -6,9 +6,20 @@ import wandb
 from datamodules.bray_preprocessed_data_module import BrayPreprocessedDataModule
 from lightning_models.lightning_cfm_classifier import LightningCFMClassifier
 
+# 1. Define the sweep configuration dictionary
+sweep_config = {
+    "method": "grid",  # Tries every combination
+    "metric": {"name": "val/roc_auc", "goal": "maximize"},
+    "parameters": {
+        "num_blocks": {"values": [4, 8, 12]},
+        "lr": {"values": [1e-3, 1e-4, 1e-5]},
+        "t_power": {"values": [1.0, 2.0]},
+    },
+}
 
-def main():
-    # 1. Initialize wandb to fetch this run's specific hyperparameters
+
+def sweep_train_step():
+    # 2. Initialize the specific run determined by the sweep controller
     wandb.init()
     config = wandb.config
 
@@ -18,7 +29,7 @@ def main():
     mask_uncertain = False
     unknown_as_negative = False
 
-    # 2. Extract swept parameters from config
+    # Extract swept parameters
     lr = config.lr
     num_blocks = config.num_blocks
     t_power = config.t_power
@@ -33,7 +44,7 @@ def main():
         ternary_labels=ternary_labels,
     )
 
-    # Model (Injecting the swept hyperparams here)
+    # Model
     flow = LightningCFMClassifier(
         num_classes=num_classes,
         embedding_dim=4558,
@@ -55,7 +66,7 @@ def main():
         filename="flow-{epoch:02d}-{val/roc_auc:.4f}",
     )
 
-    # 3. Use the existing wandb run instead of creating a new one
+    # Setup logger to hook into the current sweep run
     logger = WandbLogger(
         project="flow_matching",
         name=f"bray_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}",
@@ -73,4 +84,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # 3. Register the sweep with W&B central server
+    sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching")
+
+    # 4. Start the agent locally to run through the grid
+    # count=18 means it will execute exactly the 18 combinations (3 * 3 * 2) and then exit
+    wandb.agent(sweep_id, function=sweep_train_step, count=18)
