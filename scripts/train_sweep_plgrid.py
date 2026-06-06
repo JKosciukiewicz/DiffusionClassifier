@@ -13,9 +13,11 @@ sweep_config = {
     "parameters": {
         "num_blocks": {"values": [4, 8, 12, 16]},
         "cfm_method": {"values": ["vanilla", "ot"]},
-        "lr": {"values": [1e-3, 1e-4, 1e-5]},
+        "lr": {"values": [1e-3, 1e-4, 5e-4]},
         "normalization_layer": {"values": [True, False]},
         "t_power": {"values": [1.0, 3.0, 5.0, 7.0]},
+        "label_dropout": {"values": [0.1, 0.2, 0.3, 0.5]},
+        "cond_dim": {"values": [256, 384, 512]},
     },
 }
 
@@ -37,6 +39,8 @@ def sweep_train_step():
     t_power = config.t_power
     normalization_layer = config.normalization_layer
     cfm_method = config.cfm_method
+    label_dropout = config.label_dropout
+    cond_dim = config.cond_dim
 
     # DataModule
     bray_datamodule = BrayPreprocessedDataModule(
@@ -61,6 +65,8 @@ def sweep_train_step():
         weight_decay=1e-8,
         ternary_labels=ternary_labels,
         t_power=t_power,
+        cond_dim=cond_dim,
+        label_dropout=label_dropout,
     )
 
     checkpoint_callback = ModelCheckpoint(
@@ -79,7 +85,7 @@ def sweep_train_step():
     )
 
     trainer = L.Trainer(
-        max_epochs=100,
+        max_epochs=200,
         callbacks=[checkpoint_callback],
         check_val_every_n_epoch=5,
         logger=logger,
@@ -97,4 +103,4 @@ if __name__ == "__main__":
 
     # 4. Start the agent locally to run through the grid
     # count=18 means it will execute exactly the 18 combinations (3 * 3 * 2) and then exit
-    wandb.agent(sweep_id, function=sweep_train_step, count=100)
+    wandb.agent(sweep_id, function=sweep_train_step, count=300)
