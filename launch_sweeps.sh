@@ -8,7 +8,7 @@
 #SBATCH --gres=gpu
 
 
-source /net/pr2/projects/plgrid/plggwtln/jk/DiffusionClassifier
+source /net/pr2/projects/plgrid/plggwtln/jk/DiffusionClassifier/bin/activate
 cd /net/people/plgrid/plgjkosciukiewi/DiffusionClassifier/
 
 python scripts/train_sweep_plgrid.py
