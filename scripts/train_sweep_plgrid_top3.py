@@ -11,11 +11,9 @@ sweep_config = {
     "method": "bayes",
     "metric": {"name": "val/roc_auc", "goal": "maximize"},
     "parameters": {
-        "num_blocks": {"values": [4, 8, 12, 16]},
-        "cfm_method": {"values": ["vanilla", "ot"]},
-        "lr": {"values": [1e-3, 1e-4, 5e-4]},
-        "normalization_layer": {"values": [True, False]},
-        "t_power": {"values": [1.0, 3.0, 5.0, 7.0]},
+        "lr": {"values": [1e-4, 3e-4, 5e-4]},
+        "num_blocks": {"values": [8, 12]},
+        "t_power": {"values": [2.0, 3.0, 5.0]},
         "label_dropout": {"values": [0.1, 0.2, 0.3, 0.5]},
         "cond_dim": {"values": [256, 384, 512]},
     },
@@ -28,17 +26,15 @@ def sweep_train_step():
     config = wandb.config
 
     # Static settings
-    num_classes = 30
+    num_classes = 3
     ternary_labels = True
-    mask_uncertain = False
+    mask_uncertain = True
     unknown_as_negative = False
 
     # Extract swept parameters
     lr = config.lr
     num_blocks = config.num_blocks
     t_power = config.t_power
-    normalization_layer = config.normalization_layer
-    cfm_method = config.cfm_method
     label_dropout = config.label_dropout
     cond_dim = config.cond_dim
 
@@ -57,15 +53,15 @@ def sweep_train_step():
         num_classes=num_classes,
         embedding_dim=4558,
         lr=lr,
-        cfm_method=cfm_method,
+        cfm_method="vanilla",
         num_blocks=num_blocks,
+        cond_dim=cond_dim,
         masked_loss=False if unknown_as_negative or ternary_labels else True,
         backbone_type="none",
-        normalization_layer=normalization_layer,
+        normalization_layer=True,
         weight_decay=1e-8,
         ternary_labels=ternary_labels,
         t_power=t_power,
-        cond_dim=cond_dim,
         label_dropout=label_dropout,
     )
 
@@ -80,7 +76,7 @@ def sweep_train_step():
     # Setup logger to hook into the current sweep run
     logger = WandbLogger(
         project=f"flow_matching_top_{num_classes}_sweeps",
-        name=f"bray_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}",
+        name=f"bray_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}__ldrop:{label_dropout}__cond:{cond_dim}",
         experiment=wandb.run,
     )
 
@@ -97,8 +93,6 @@ def sweep_train_step():
 
 if __name__ == "__main__":
     # 3. Register the sweep with W&B central server
-    sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching_sweeps_top_30")
+    sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching_sweep2_top_3")
 
-    # 4. Start the agent locally to run through the grid
-    # count=18 means it will execute exactly the 18 combinations (3 * 3 * 2) and then exit
-    wandb.agent(sweep_id, function=sweep_train_step, count=100)
+    wandb.agent(sweep_id, function=sweep_train_step, count=30)
