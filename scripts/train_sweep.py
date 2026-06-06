@@ -8,12 +8,14 @@ from lightning_models.lightning_cfm_classifier import LightningCFMClassifier
 
 # 1. Define the sweep configuration dictionary
 sweep_config = {
-    "method": "grid",  # Tries every combination
+    "method": "bayes",
     "metric": {"name": "val/roc_auc", "goal": "maximize"},
     "parameters": {
         "num_blocks": {"values": [2, 4, 8, 12]},
+        "cfm_method": {"values": ["vanilla", "ot"]},
         "lr": {"values": [1e-3, 1e-4, 1e-5]},
-        "t_power": {"values": [1.0, 2.0]},
+        "normalization_layer": {"values": [True, False]},
+        "t_power": {"values": [2.0, 3.0, 5.0]},
     },
 }
 
@@ -24,7 +26,7 @@ def sweep_train_step():
     config = wandb.config
 
     # Static settings
-    num_classes = 30
+    num_classes = 3
     ternary_labels = True
     mask_uncertain = False
     unknown_as_negative = False
@@ -33,6 +35,8 @@ def sweep_train_step():
     lr = config.lr
     num_blocks = config.num_blocks
     t_power = config.t_power
+    normalization_layer = config.normalization_layer
+    cfm_method = config.cfm_method
 
     # DataModule
     bray_datamodule = BrayPreprocessedDataModule(
@@ -49,10 +53,11 @@ def sweep_train_step():
         num_classes=num_classes,
         embedding_dim=4558,
         lr=lr,
-        cfm_method="vanilla",
+        cfm_method=cfm_method,
         num_blocks=num_blocks,
         masked_loss=False if unknown_as_negative or ternary_labels else True,
         backbone_type="none",
+        normalization_layer=normalization_layer,
         weight_decay=1e-8,
         ternary_labels=ternary_labels,
         t_power=t_power,
@@ -68,8 +73,9 @@ def sweep_train_step():
 
     # Setup logger to hook into the current sweep run
     logger = WandbLogger(
-        project="flow_matching_top_30_sweeps",
+        project=f"flow_matching_top_{num_classes}_sweeps",
         name=f"bray_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}",
+        experiment=wandb.run,
     )
 
     trainer = L.Trainer(
@@ -85,7 +91,7 @@ def sweep_train_step():
 
 if __name__ == "__main__":
     # 3. Register the sweep with W&B central server
-    sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching")
+    sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching_norm_fixed_top_3")
 
     # 4. Start the agent locally to run through the grid
     # count=18 means it will execute exactly the 18 combinations (3 * 3 * 2) and then exit

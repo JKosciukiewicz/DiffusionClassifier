@@ -1,125 +1,186 @@
 """
-Preprocess Bray data: join features + labels once and save to .npz.
+Build Bray .npz datasets from raw gigadb.csv.
+
+Pipeline:
+  1. Aggregate site-level → well-level (median per well).
+  2. Per-plate MAD normalization to DMSO negcon (Metadata_cpd_name == "DMSO").
+  3. Join with each label file and save .npz — no clipping, no re-normalization.
 
 Usage:
     uv run python scripts/preprocess_bray.py \
-        --data_file _data/gigadb/gigadb_well_level.csv \
-        --labels_file _data/gigadb/gigadb_top_5_moas.csv \
-        --output _data/gigadb/bray_top_5_moas.npz
+        --data_file _data/gigadb/gigadb.csv \
+        --output_dir _data/gigadb
 """
+
 import argparse
 
 import numpy as np
 import polars as pl
 
-LABEL_EXCLUDE = {
-    "image_id", "plate_id", "well_id", "site_id",
-    "BROAD_ID", "canonical_smiles", "chembl_id", "hier_split",
+METADATA_KEYWORDS = {
+    "Location",
+    "Number",
+    "Object",
+    "Count",
+    "EulerNumber",
+    "FileName",
+    "PathName",
+    "URL",
+    "Parent",
+    "Children",
 }
+
+LABEL_EXCLUDE = {
+    "image_id",
+    "plate_id",
+    "well_id",
+    "site_id",
+    "BROAD_ID",
+    "canonical_smiles",
+    "chembl_id",
+    "hier_split",
+}
+
+LABEL_SETS = [
+    ("gigadb_top_3_moas.csv", "bray_top_3_moas.npz"),
+    ("gigadb_top_5_moas.csv", "bray_top_5_moas.npz"),
+    ("gigadb_top_30_moas.csv", "bray_top_30_moas.npz"),
+]
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_file", required=True)
-    parser.add_argument("--labels_file", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument(
-        "--normalize",
-        choices=["none", "robust", "zscore"],
-        default="robust",
-        help="Per-feature re-normalization fit on the train split. "
-        "'robust' = median/IQR (outlier-resistant), 'zscore' = mean/std.",
-    )
-    parser.add_argument(
-        "--clip",
-        type=float,
-        default=10.0,
-        help="Clip normalized features to [-clip, clip] to bound residual "
-        "outliers; set <= 0 to disable.",
-    )
+    parser.add_argument("--data_file", default="_data/gigadb/gigadb.csv")
+    parser.add_argument("--output_dir", default="_data/gigadb")
     args = parser.parse_args()
 
-    print("Scanning schemas...")
-    labels_schema = pl.scan_csv(args.labels_file).collect_schema()
-    moa_columns = [
-        col for col in labels_schema.keys()
-        if col not in LABEL_EXCLUDE
-        and not col.startswith("Unnamed:")
-        and not col.startswith("hier_split_")
+    print("Loading schema...")
+    all_cols = list(pl.scan_csv(args.data_file).collect_schema().keys())
+    feature_columns = [
+        col
+        for col in all_cols
+        if col.startswith(("Image_", "Cells_", "Cytoplasm_", "Nuclei_"))
+        and not any(kw in col for kw in METADATA_KEYWORDS)
     ]
-    print(f"  MoA columns ({len(moa_columns)}): {moa_columns}")
-
-    data_schema = pl.scan_csv(args.data_file).collect_schema()
-    feature_columns = [col for col in data_schema.keys() if col.startswith("feat_")]
-    print(f"  Feature columns: {len(feature_columns)}")
+    well_keys = ["Metadata_Plate", "Metadata_Well"]
+    other_metadata = [
+        col
+        for col in all_cols
+        if col not in feature_columns
+        and col not in well_keys
+        and col != "Metadata_Site"
+    ]
+    print(
+        f"  {len(feature_columns)} feature columns, {len(other_metadata)} other metadata columns"
+    )
 
     schema_overrides = {col: pl.Float32 for col in feature_columns}
 
-    print("Joining data + labels (no split filter — keeping all rows)...")
-    labels_df = (
-        pl.scan_csv(args.labels_file)
-        .select(["BROAD_ID", "hier_split"] + moa_columns)
-        .unique(subset=["BROAD_ID"])
-        .fill_null(0)
+    print("Loading data...")
+    data = pl.read_csv(args.data_file, schema_overrides=schema_overrides)
+
+    print("Aggregating site-level → well-level (median per well)...")
+    well_df = data.group_by(well_keys).agg(
+        [pl.col(col).median().alias(col) for col in feature_columns]
+        + [pl.col(col).first().alias(col) for col in other_metadata]
     )
-    data_df = (
-        pl.scan_csv(args.data_file, schema_overrides=schema_overrides, low_memory=True)
-        .select(["Metadata_broad_sample"] + feature_columns)
-        .fill_null(0)
-        .rename({"Metadata_broad_sample": "BROAD_ID"})
+    print(f"  Well-level rows: {len(well_df)}")
+
+    print("Per-plate MAD normalization to DMSO negcon...")
+    features_np = well_df.select(feature_columns).to_numpy().astype(np.float32)
+    plate_ids = well_df["Metadata_Plate"].to_numpy()
+    is_dmso = (
+        (well_df["Metadata_cpd_name"].fill_null("") == "DMSO").to_numpy().astype(bool)
     )
 
-    merged = (
-        data_df.join(labels_df, on="BROAD_ID", how="inner")
-        .select(["hier_split"] + feature_columns + moa_columns)
-        .collect(streaming=True)
+    print(
+        f"  Before: mean={features_np.mean():.3f} std={features_np.std():.3f} "
+        f"min={features_np.min():.3f} max={features_np.max():.3f}"
     )
-    print(f"Joined: {len(merged)} samples")
 
-    features = merged.select(feature_columns).to_numpy().astype(np.float32)
-    labels = merged.select(moa_columns).to_numpy().astype(np.float32)
-    split = np.array(merged["hier_split"].to_list())
+    normalized = features_np.copy()
+    for plate in np.unique(plate_ids):
+        plate_mask = plate_ids == plate
+        dmso_mask = plate_mask & is_dmso
+        if dmso_mask.sum() == 0:
+            continue
+        dmso_feats = features_np[dmso_mask]
+        median = np.median(dmso_feats, axis=0)
+        mad = np.median(np.abs(dmso_feats - median), axis=0) * 1.4826
+        degenerate = mad < 1e-4
+        safe_mad = np.where(degenerate, 1.0, mad)
+        norm_plate = (features_np[plate_mask] - median) / safe_mad
+        norm_plate[:, degenerate] = 0.0
+        normalized[plate_mask] = norm_plate
 
-    # Re-normalize features per feature using TRAIN-split statistics (applied to
-    # all splits — no leakage). The source data is already z-scored but carries
-    # extreme outliers (~ -514..4670) from near-degenerate / artefact features;
-    # robust median/IQR scaling is outlier-resistant, and the clip bounds spikes.
-    if args.normalize != "none":
-        train_mask = split == "train"
-        if train_mask.sum() == 0:
-            raise ValueError("No rows with hier_split == 'train' to fit normalization.")
-        train_feats = features[train_mask]
-        if args.normalize == "robust":
-            center = np.median(train_feats, axis=0)
-            q25, q75 = np.percentile(train_feats, [25, 75], axis=0)
-            scale = q75 - q25
-        else:  # zscore
-            center = train_feats.mean(axis=0)
-            scale = train_feats.std(axis=0)
-        scale = np.where(scale < 1e-6, 1.0, scale)  # leave dead features alone
-        features = (features - center) / scale
-        if args.clip > 0:
-            features = np.clip(features, -args.clip, args.clip)
-        features = features.astype(np.float32)
+    normalized = np.clip(normalized, -20, 20)
+
+    print(
+        f"  Normalized: mean={normalized.mean():.3f} std={normalized.std():.3f} "
+        f"min={normalized.min():.3f} max={normalized.max():.3f}"
+    )
+
+    broad_ids = well_df["Metadata_broad_sample"].to_numpy()
+
+    for labels_file, output_file in LABEL_SETS:
+        labels_path = f"{args.output_dir}/{labels_file}"
+        output_path = f"{args.output_dir}/{output_file}"
+        print(f"\n{labels_file} → {output_file}")
+
+        labels_schema = pl.scan_csv(labels_path).collect_schema()
+        moa_columns = [
+            col
+            for col in labels_schema.keys()
+            if col not in LABEL_EXCLUDE
+            and not col.startswith("Unnamed:")
+            and not col.startswith("hier_split_")
+        ]
         print(
-            f"Normalized ({args.normalize}, clip={args.clip}): "
-            f"mean={features.mean():.3f} std={features.std():.3f} "
-            f"min={features.min():.3f} max={features.max():.3f}"
+            f"  MoA columns ({len(moa_columns)}): {moa_columns[:5]}{'...' if len(moa_columns) > 5 else ''}"
         )
 
-    print(f"Saving to {args.output} ...")
-    np.savez_compressed(
-        args.output,
-        features=features,
-        labels=labels,
-        split=split,
-        moa_columns=np.array(moa_columns),
-    )
+        labels_df = (
+            pl.scan_csv(labels_path)
+            .select(["BROAD_ID", "hier_split"] + moa_columns)
+            .unique(subset=["BROAD_ID"])
+            .fill_null(0)
+            .collect()
+        )
+        label_broad = labels_df["BROAD_ID"].to_numpy()
+        label_split = labels_df["hier_split"].to_numpy()
+        label_moas = labels_df.select(moa_columns).to_numpy().astype(np.float32)
 
-    splits, counts = np.unique(split, return_counts=True)
-    for s, c in zip(splits, counts):
-        print(f"  {s}: {c} samples")
-    print("Done.")
+        # Index join: build lookup from BROAD_ID → label row index.
+        label_idx = {bid: i for i, bid in enumerate(label_broad)}
+        rows = [
+            (i, label_idx[bid]) for i, bid in enumerate(broad_ids) if bid in label_idx
+        ]
+        if not rows:
+            print("  WARNING: no matching BROAD_IDs, skipping.")
+            continue
+        data_rows, lbl_rows = zip(*rows)
+        data_rows = np.array(data_rows)
+        lbl_rows = np.array(lbl_rows)
+
+        features_out = normalized[data_rows]
+        labels_out = label_moas[lbl_rows]
+        split_out = label_split[lbl_rows]
+
+        print(f"  Samples: {len(features_out)}")
+        splits, counts = np.unique(split_out, return_counts=True)
+        for s, c in zip(splits, counts):
+            print(f"    {s}: {c}")
+
+        np.savez_compressed(
+            output_path,
+            features=features_out,
+            labels=labels_out,
+            split=split_out,
+            moa_columns=np.array(moa_columns),
+        )
+        print(f"  Saved → {output_path}")
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":

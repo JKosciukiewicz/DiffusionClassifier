@@ -11,4 +11,4 @@
 source /net/pr2/projects/plgrid/plggwtln/jk/DiffusionClassifier
 cd /net/people/plgrid/plgjkosciukiewi/DiffusionClassifier/
 
-python scripts/train_sweep.py
+python scripts/train_sweep_plgrid.py

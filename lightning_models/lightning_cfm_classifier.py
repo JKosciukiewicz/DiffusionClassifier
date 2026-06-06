@@ -68,6 +68,7 @@ class LightningCFMClassifier(BaseModel):
         masked_loss: bool = False,
         backbone_type: str = "none",
         backbone_ckpt_path: Optional[str] = None,
+        normalization_layer:bool = True,
         clip_model_name: str = "ViT-B/32",
         hidden_dim: int = 512,
         cond_dim: int = 256,
@@ -82,6 +83,7 @@ class LightningCFMClassifier(BaseModel):
         t_power: float = 1.0,
     ):
         super().__init__()
+        self.save_hyperparameters()
 
         self.num_classes = num_classes
         self.embedding_dim = embedding_dim
@@ -117,7 +119,10 @@ class LightningCFMClassifier(BaseModel):
             raise ValueError(f"Unknown backbone type: {backbone_type}")
 
         # normalize features
-        self.feature_norm = nn.LayerNorm(embedding_dim, elementwise_affine=False)
+        if normalization_layer:
+            self.feature_norm = nn.LayerNorm(embedding_dim, elementwise_affine=False)
+        else:
+            self.feature_norm = nn.Identity()
 
         self.model = CFMVelocityNet(
             feature_dim=embedding_dim,
