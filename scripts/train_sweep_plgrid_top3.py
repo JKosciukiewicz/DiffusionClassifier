@@ -95,4 +95,4 @@ if __name__ == "__main__":
     # 3. Register the sweep with W&B central server
     sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching_sweep2_top_3")
 
-    wandb.agent(sweep_id, function=sweep_train_step, count=30)
+    wandb.agent(sweep_id, function=sweep_train_step, count=50)
