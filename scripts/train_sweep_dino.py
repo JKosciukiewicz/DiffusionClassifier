@@ -6,6 +6,7 @@ import wandb
 from datamodules.bray_preprocessed_data_module import BrayPreprocessedDataModule
 from lightning_models.lightning_cfm_classifier import LightningCFMClassifier
 
+# 1. Define the sweep configuration dictionary
 sweep_config = {
     "method": "bayes",
     "metric": {"name": "val/roc_auc", "goal": "maximize"},
@@ -14,22 +15,25 @@ sweep_config = {
         "cfm_method": {"values": ["vanilla", "ot"]},
         "lr": {"values": [1e-3, 1e-4, 5e-4]},
         "normalization_layer": {"values": [True, False]},
-        "t_power": {"values": [1.0, 2.0, 3.0, 5.0]},
+        "t_power": {"values": [1.0, 3.0, 5.0, 7.0]},
         "label_dropout": {"values": [0.1, 0.2, 0.3, 0.5]},
-        "cond_dim": {"values": [128, 256, 384]},
+        "cond_dim": {"values": [256, 384, 512]},
     },
 }
 
 
 def sweep_train_step():
+    # 2. Initialize the specific run determined by the sweep controller
     wandb.init()
     config = wandb.config
 
-    num_classes = 3
+    # Static settings
+    num_classes = 30
     ternary_labels = True
     mask_uncertain = False
     unknown_as_negative = False
 
+    # Extract swept parameters
     lr = config.lr
     num_blocks = config.num_blocks
     t_power = config.t_power
@@ -38,8 +42,9 @@ def sweep_train_step():
     label_dropout = config.label_dropout
     cond_dim = config.cond_dim
 
+    # DataModule
     bray_datamodule = BrayPreprocessedDataModule(
-        npz_path=f"_data/gigadb/bray_dino_top_{num_classes}_moas.npz",
+        npz_path=f"_data/gigadb/bray_top_{num_classes}_moas.npz",
         batch_size=256,
         mask_uncertain=mask_uncertain,
         treat_uncertain_as_negative=unknown_as_negative,
@@ -47,9 +52,10 @@ def sweep_train_step():
         ternary_labels=ternary_labels,
     )
 
+    # Model
     flow = LightningCFMClassifier(
         num_classes=num_classes,
-        embedding_dim=384,
+        embedding_dim=4558,
         lr=lr,
         cfm_method=cfm_method,
         num_blocks=num_blocks,
@@ -67,13 +73,13 @@ def sweep_train_step():
         save_top_k=1,
         monitor="val/roc_auc",
         mode="max",
-        dirpath="/net/pr2/projects/plgrid/plggwtln/jk/checkpoints/bray_dino/flow_matching",
+        dirpath="./checkpoints/bray_dino/flow_matching",
         filename="flow-{epoch:02d}-{val/roc_auc:.4f}",
     )
 
     logger = WandbLogger(
         project=f"flow_matching_dino_top_{num_classes}_sweeps",
-        name=f"dino_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}",
+        name=f"dino_top:{num_classes}__lr:{lr}__blocks:{num_blocks}__t_power:{t_power}__ldrop:{label_dropout}__cond:{cond_dim}",
         experiment=wandb.run,
     )
 
@@ -89,7 +95,5 @@ def sweep_train_step():
 
 
 if __name__ == "__main__":
-    sweep_id = wandb.sweep(
-        sweep=sweep_config, project="flow_matching_dino_sweeps_top_3"
-    )
-    wandb.agent(sweep_id, function=sweep_train_step, count=100)
+    sweep_id = wandb.sweep(sweep=sweep_config, project="flow_matching_dino_sweep_top_3")
+    wandb.agent(sweep_id, function=sweep_train_step, count=30)

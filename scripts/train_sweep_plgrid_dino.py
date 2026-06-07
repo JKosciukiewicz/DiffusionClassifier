@@ -25,7 +25,7 @@ def sweep_train_step():
     wandb.init()
     config = wandb.config
 
-    num_classes = 3
+    num_classes = 30
     ternary_labels = True
     mask_uncertain = False
     unknown_as_negative = False
@@ -90,6 +90,6 @@ def sweep_train_step():
 
 if __name__ == "__main__":
     sweep_id = wandb.sweep(
-        sweep=sweep_config, project="flow_matching_dino_sweeps_top_3"
+        sweep=sweep_config, project="flow_matching_dino_sweeps_top_30"
     )
     wandb.agent(sweep_id, function=sweep_train_step, count=100)
