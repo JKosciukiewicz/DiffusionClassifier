@@ -35,7 +35,7 @@ def sweep_train_step():
     cond_dim = config.cond_dim
 
     bray_datamodule = BrayPreprocessedDataModule(
-        npz_path=f"_data/bray_dino/bray_dino_top_{num_classes}_moas.npz",
+        npz_path=f"_data/gigadb/bray_dino_top_{num_classes}_moas.npz",
         batch_size=256,
         mask_uncertain=mask_uncertain,
         treat_uncertain_as_negative=unknown_as_negative,
