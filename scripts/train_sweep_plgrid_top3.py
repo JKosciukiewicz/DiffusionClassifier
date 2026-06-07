@@ -67,7 +67,7 @@ def sweep_train_step():
         save_top_k=1,
         monitor="val/roc_auc",
         mode="max",
-        dirpath="/net/pr2/projects/plgrid/plggwtln/jk/checkpoints/bray_dino/flow_matching",
+        dirpath="/net/pr2/projects/plgrid/plggwtln/jk/checkpoints/bray_dino_top_3/flow_matching",
         filename="flow-{epoch:02d}-{val/roc_auc:.4f}",
     )
 
