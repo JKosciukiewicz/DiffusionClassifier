@@ -15,6 +15,7 @@ class BrayPreprocessedDataModule(BaseDataModule):
         treat_uncertain_as_negative: bool = False,
         feature_noise_std: float = 0.0,
         ternary_labels: bool = False,
+        fold: int = 0,
     ):
         super().__init__()
         self.npz_path = npz_path
@@ -24,6 +25,7 @@ class BrayPreprocessedDataModule(BaseDataModule):
         self.treat_uncertain_as_negative = treat_uncertain_as_negative
         self.feature_noise_std = feature_noise_std
         self.ternary_labels = ternary_labels
+        self.fold = fold
         self._num_classes = None
         self._embedding_dim = None
 
@@ -33,6 +35,7 @@ class BrayPreprocessedDataModule(BaseDataModule):
             ternary_labels=self.ternary_labels,
             treat_uncertain_as_negative=self.treat_uncertain_as_negative,
             mask_uncertain=self.mask_uncertain,
+            fold=self.fold,
         )
         if stage == "fit":
             train_full = BrayPreprocessedDataset(

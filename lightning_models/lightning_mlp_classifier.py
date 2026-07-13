@@ -16,6 +16,7 @@ from sklearn.metrics import (
 from torchmetrics.functional.classification import binary_calibration_error
 
 from lightning_models.base_model import BaseModel
+from loss import MaskedBCELoss
 from models.mlp import MLPClassifier
 
 matplotlib.use("Agg")
@@ -39,15 +40,34 @@ class LightningMLPClassifier(BaseModel):
         embedding_dim: int,
         lr: float = 1e-4,
         masked_loss: bool = False,
+        hidden_dims: Optional[List[int]] = None,
+        dropout: float = 0.0,
+        weight_decay: float = 0.0,
+        normalization_layer: bool = False,
         moa_columns: Optional[List[str]] = None,
         auc_thresholds: List[float] = [0.6, 0.7, 0.8, 0.9],
         log_per_fold_details: bool = True,
     ):
         super().__init__()
+        self.save_hyperparameters()
         self.lr = lr
+        self.weight_decay = weight_decay
         self.masked_loss = masked_loss
-        self.model = MLPClassifier(num_classes=num_classes, embedding_dim=embedding_dim)
+        # Same LayerNorm on the input features as the CFM model, so the two are
+        # comparable when sweeping.
+        self.feature_norm = (
+            nn.LayerNorm(embedding_dim, elementwise_affine=False)
+            if normalization_layer
+            else nn.Identity()
+        )
+        self.model = MLPClassifier(
+            num_classes=num_classes,
+            embedding_dim=embedding_dim,
+            hidden_dims=hidden_dims,
+            dropout=dropout,
+        )
         self.loss_fn = nn.BCELoss()
+        self.masked_loss_fn = MaskedBCELoss()
         self.moa_columns = moa_columns or [str(i) for i in range(num_classes)]
         self.auc_thresholds = auc_thresholds
         self.log_per_fold_details = log_per_fold_details
@@ -58,25 +78,24 @@ class LightningMLPClassifier(BaseModel):
         self.per_class_ece: List[float] = []
 
     def forward(self, x):
-        return self.model(x)
+        return self.model(self.feature_norm(x.float()))
+
+    def _loss(self, pred, y, mask):
+        if self.masked_loss:
+            return self.masked_loss_fn(pred, y, mask)
+        return self.loss_fn(pred, y)
 
     def training_step(self, batch, batch_idx):
         x, y, mask = batch
         pred = self.forward(x)
-        if self.masked_loss:
-            loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() + 1e-8)
-        else:
-            loss = self.loss_fn(pred, y)
+        loss = self._loss(pred, y, mask)
         self.log("train/loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y, mask = batch
         pred = self.forward(x)
-        if self.masked_loss:
-            loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() + 1e-8)
-        else:
-            loss = self.loss_fn(pred, y)
+        loss = self._loss(pred, y, mask)
         self.log("val/loss", loss, prog_bar=True)
 
         mask_bool = mask.bool()
@@ -204,4 +223,6 @@ class LightningMLPClassifier(BaseModel):
         plt.close(fig)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        return torch.optim.AdamW(
+            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
+        )

@@ -23,7 +23,7 @@ moa_columns = list(_data["moa_columns"])
 short_names = [c.replace("moa_", "") for c in moa_columns]
 
 wandb_group = f"kfold_cfm_dino_top{num_classes}"
-wandb_project = "bray_dino_cfm_5fold"
+wandb_project = "bray_dino_cfm_5fold_w_ece"
 
 fold_metrics = []  # result dicts from trainer.test(), one per fold
 fold_per_class = []  # per-class AUC lists for cross-fold AUC boxplot

@@ -12,12 +12,18 @@ class BrayPreprocessedDataset(Dataset):
         ternary_labels: bool = False,
         treat_uncertain_as_negative: bool = False,
         mask_uncertain: bool = True,
+        fold: int = 0,
     ):
         data = np.load(npz_path, allow_pickle=True)
         self.moa_columns = list(data["moa_columns"])
         self.noise_std = noise_std
 
-        idx = data["split"] == split_value
+        # Use per-fold split column when available (shape N×5), else fall back to split.
+        if "splits" in data:
+            split_col = data["splits"][:, fold]
+        else:
+            split_col = data["split"]
+        idx = split_col == split_value
         features = data["features"][idx]
         labels_raw = data["labels"][idx].astype(np.float32)
 

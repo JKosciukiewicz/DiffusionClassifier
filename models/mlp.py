@@ -1,56 +1,41 @@
+from typing import List, Optional, Sequence
+
 import torch.nn as nn
+
+# Original fixed architecture — kept as the default so existing scripts are unchanged.
+DEFAULT_HIDDEN_DIMS = (256, 128, 64, 32, 16)
 
 
 class MLPClassifier(nn.Module):
-    def __init__(self, num_classes=10, embedding_dim=128):
+    """Residual MLP. Each hidden layer is Linear + a projected residual, then ReLU."""
+
+    def __init__(
+        self,
+        num_classes: int = 10,
+        embedding_dim: int = 128,
+        hidden_dims: Optional[Sequence[int]] = None,
+        dropout: float = 0.0,
+    ):
         super().__init__()
-        # MLP to equal number of layers from classifier
-        # Define the layers for the MLP with residual connections
-        self.fc1 = nn.Linear(embedding_dim, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.fc4 = nn.Linear(64, 32)
-        self.fc5 = nn.Linear(32, 16)
-        self.fc6 = nn.Linear(16, num_classes)
+        hidden_dims: List[int] = list(hidden_dims or DEFAULT_HIDDEN_DIMS)
+        dims = [embedding_dim, *hidden_dims]
+
+        self.layers = nn.ModuleList(
+            nn.Linear(dims[i], dims[i + 1]) for i in range(len(hidden_dims))
+        )
+        # Projections make the residual add work across changing widths.
+        self.res_projs = nn.ModuleList(
+            nn.Linear(dims[i], dims[i + 1]) for i in range(len(hidden_dims))
+        )
+        self.out = nn.Linear(dims[-1], num_classes)
 
         self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
         self.sigmoid = nn.Sigmoid()
 
-        # Projection layers for residual connections
-        self.res_proj1 = nn.Linear(embedding_dim, 256)
-        self.res_proj2 = nn.Linear(256, 128)
-        self.res_proj3 = nn.Linear(128, 64)
-        self.res_proj4 = nn.Linear(64, 32)
-        self.res_proj5 = nn.Linear(32, 16)
-
     def forward(self, features):
-        # First layer with residual connection
-        x = self.fc1(features)
-        residual = self.res_proj1(features)
-        x = self.relu(x + residual)
-
-        # Second layer with residual connection
-        residual = self.res_proj2(x)
-        x = self.fc2(x)
-        x = self.relu(x + residual)
-
-        # Third layer with residual connection
-        residual = self.res_proj3(x)
-        x = self.fc3(x)
-        x = self.relu(x + residual)
-
-        # Fourth layer with residual connection
-        residual = self.res_proj4(x)
-        x = self.fc4(x)
-        x = self.relu(x + residual)
-
-        # Fifth layer with residual connection
-        residual = self.res_proj5(x)
-        x = self.fc5(x)
-        x = self.relu(x + residual)
-
-        # Final layer (no residual connection here)
-        x = self.fc6(x)
-        x = self.sigmoid(x)
-
-        return x
+        x = features
+        for fc, res_proj in zip(self.layers, self.res_projs):
+            x = self.relu(fc(x) + res_proj(x))
+            x = self.dropout(x)
+        return self.sigmoid(self.out(x))
