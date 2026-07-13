@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -13,91 +14,135 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from torchmetrics.functional.classification import binary_calibration_error
+from torchcfm.conditional_flow_matching import ConditionalFlowMatcher
 
 from lightning_models.base_model import BaseModel
-from models.mlp import MLPClassifier
-
-matplotlib.use("Agg")
+from models.card_velocity_net import CARDVelocityNet
 
 
-def calibration_error(probs, targets, norm: str = "l1", n_bins: int = 15) -> float:
-    """Expected (l1) / maximum (max) calibration error over a flat prob/target vector.
+class LightningCARDClassifier(BaseModel):
+    """CARD-style multi-label classifier via Flow Matching in label space.
 
-    Multi-label with masking, so this is the binary (per-entry) variant rather than
-    the multiclass one: every valid (sample, class) pair is one binary prediction.
+    Instead of the generative Bayes route p(x|y) -> p(y|x), this models p(y|x)
+    directly: a velocity field v(y_t, t, x) flows Gaussian noise -> label vector
+    conditioned on the feature vector x.
+
+    At inference, running the ODE from z~N(0,I^K) to z_1 and applying sigmoid
+    gives calibrated per-class probabilities directly, with no Bayes inversion.
+    Multiple ODE samples are averaged to reduce stochasticity.
     """
-    probs = torch.as_tensor(probs, dtype=torch.float32)
-    targets = torch.as_tensor(targets).long()
-    return binary_calibration_error(probs, targets, n_bins=n_bins, norm=norm).item()
 
-
-class LightningMLPClassifier(BaseModel):
     def __init__(
         self,
         num_classes: int,
         embedding_dim: int,
         lr: float = 1e-4,
-        masked_loss: bool = False,
+        num_blocks: int = 6,
+        hidden_dim: int = 256,
+        cond_dim: int = 256,
+        dropout: float = 0.0,
+        num_integration_steps: int = 20,
+        test_integration_steps: int = 50,
+        num_pred_samples: int = 5,
+        normalization_layer: bool = True,
+        weight_decay: float = 1e-4,
         moa_columns: Optional[List[str]] = None,
         auc_thresholds: List[float] = [0.6, 0.7, 0.8, 0.9],
         log_per_fold_details: bool = True,
     ):
         super().__init__()
+        self.save_hyperparameters()
+
         self.lr = lr
-        self.masked_loss = masked_loss
-        self.model = MLPClassifier(num_classes=num_classes, embedding_dim=embedding_dim)
-        self.loss_fn = nn.BCELoss()
+        self.weight_decay = weight_decay
+        self.num_classes = num_classes
+        self.num_integration_steps = num_integration_steps
+        self.test_integration_steps = test_integration_steps
+        self.num_pred_samples = num_pred_samples
         self.moa_columns = moa_columns or [str(i) for i in range(num_classes)]
         self.auc_thresholds = auc_thresholds
         self.log_per_fold_details = log_per_fold_details
-        self.y_pred = []
-        self.y_true = []
-        self.y_mask = []
-        self.per_class_auc: List[float] = []
-        self.per_class_ece: List[float] = []
 
-    def forward(self, x):
-        return self.model(x)
+        if normalization_layer:
+            self.feature_norm = nn.LayerNorm(embedding_dim, elementwise_affine=False)
+        else:
+            self.feature_norm = nn.Identity()
+
+        self.net = CARDVelocityNet(
+            feature_dim=embedding_dim,
+            num_classes=num_classes,
+            hidden_dim=hidden_dim,
+            cond_dim=cond_dim,
+            num_blocks=num_blocks,
+            dropout=dropout,
+        )
+        self.fm = ConditionalFlowMatcher(sigma=0.0)
+
+        self.y_pred: List[torch.Tensor] = []
+        self.y_true: List[torch.Tensor] = []
+        self.y_mask: List[torch.Tensor] = []
+        self.per_class_auc: List[float] = []
+
+    # ------------------------------------------------------------------ training
+    def _card_loss(
+        self, x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor
+    ) -> torch.Tensor:
+        y0 = torch.randn_like(y)
+        t = torch.rand(x.shape[0], device=x.device)
+        t, yt, ut = self.fm.sample_location_and_conditional_flow(y0, y, t=t)
+        v = self.net(yt, t, x)
+        # Only penalise on known label entries.
+        per_entry = (v - ut) ** 2
+        return (per_entry * mask).sum() / (mask.sum() + 1e-8)
 
     def training_step(self, batch, batch_idx):
         x, y, mask = batch
-        pred = self.forward(x)
-        if self.masked_loss:
-            loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() + 1e-8)
-        else:
-            loss = self.loss_fn(pred, y)
+        x = self.feature_norm(x.float())
+        loss = self._card_loss(x, y.float(), mask.float())
         self.log("train/loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y, mask = batch
-        pred = self.forward(x)
-        if self.masked_loss:
-            loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() + 1e-8)
-        else:
-            loss = self.loss_fn(pred, y)
+        x = self.feature_norm(x.float())
+        loss = self._card_loss(x, y.float(), mask.float())
         self.log("val/loss", loss, prog_bar=True)
 
+        y_pred = self._predict(x, num_steps=self.num_integration_steps)
         mask_bool = mask.bool()
-        y_pred_flat = pred[mask_bool].cpu()
+        y_pred_flat = y_pred[mask_bool].cpu()
         y_true_flat = y[mask_bool].cpu()
 
         if len(y_true_flat) > 0 and len(torch.unique(y_true_flat)) > 1:
             try:
-                roc_auc = roc_auc_score(y_true_flat.numpy(), y_pred_flat.detach().numpy())
+                roc_auc = roc_auc_score(y_true_flat.numpy(), y_pred_flat.numpy())
                 self.log("val/roc_auc", roc_auc, prog_bar=True)
             except ValueError:
                 pass
-        if len(y_true_flat) > 0:
-            self.log("val/ece", calibration_error(y_pred_flat.detach(), y_true_flat))
         return loss
 
+    # ------------------------------------------------------------------ inference
+    @torch.no_grad()
+    def _predict(self, x: torch.Tensor, num_steps: int) -> torch.Tensor:
+        """Euler integration: noise -> labels, averaged over num_pred_samples runs."""
+        B, K = x.shape[0], self.num_classes
+        dt = 1.0 / num_steps
+        preds = []
+        for _ in range(self.num_pred_samples):
+            z = torch.randn(B, K, device=x.device)
+            for i in range(num_steps):
+                t = torch.full((B,), i * dt, device=x.device)
+                v = self.net(z, t, x)
+                z = z + v * dt
+            preds.append(torch.sigmoid(z))
+        return torch.stack(preds).mean(0)  # (B, K)
+
+    # ------------------------------------------------------------------ test
     def test_step(self, batch, batch_idx):
         x, y, mask = batch
-        pred = self.forward(x)
-        # Keep full (N, K) tensors — per-class AUC needs them unflattened.
-        self.y_pred.append(pred.cpu())
+        x = self.feature_norm(x.float())
+        y_pred = self._predict(x, num_steps=self.test_integration_steps)
+        self.y_pred.append(y_pred.cpu())
         self.y_true.append(y.cpu())
         self.y_mask.append(mask.bool().cpu())
 
@@ -107,27 +152,21 @@ class LightningMLPClassifier(BaseModel):
         self.y_mask = []
 
     def on_test_epoch_end(self):
-        y_true = torch.cat(self.y_true).numpy()          # (N, K)
         y_pred = torch.cat(self.y_pred).numpy()          # (N, K)
-        y_mask = torch.cat(self.y_mask).numpy().astype(bool)  # (N, K)
+        y_true = torch.cat(self.y_true).numpy()          # (N, K)
+        y_mask = torch.cat(self.y_mask).numpy().astype(bool)
 
         K = y_true.shape[1]
 
-        # Per-class ROC-AUC and calibration error
         per_class_auc = []
-        per_class_ece = []
         for k in range(K):
             m = y_mask[:, k]
             if m.sum() > 0 and len(np.unique(y_true[m, k])) > 1:
                 per_class_auc.append(roc_auc_score(y_true[m, k], y_pred[m, k]))
-                per_class_ece.append(calibration_error(y_pred[m, k], y_true[m, k]))
             else:
                 per_class_auc.append(np.nan)
-                per_class_ece.append(np.nan)
         self.per_class_auc = per_class_auc
-        self.per_class_ece = per_class_ece
 
-        # Pooled metrics over all (sample, class) pairs where mask is True
         y_true_flat = y_true[y_mask]
         y_pred_flat = y_pred[y_mask]
 
@@ -137,29 +176,15 @@ class LightningMLPClassifier(BaseModel):
                 y_pred_binary = (y_pred_flat > 0.5).astype(np.float32)
                 metrics["test/roc_auc"] = roc_auc_score(y_true_flat, y_pred_flat)
                 metrics["test/accuracy"] = accuracy_score(y_true_flat, y_pred_binary)
-                metrics["test/precision"] = precision_score(
-                    y_true_flat, y_pred_binary, zero_division=0
-                )
-                metrics["test/recall"] = recall_score(
-                    y_true_flat, y_pred_binary, zero_division=0
-                )
-                metrics["test/f1_score"] = f1_score(
-                    y_true_flat, y_pred_binary, zero_division=0
-                )
-                metrics["test/ece"] = calibration_error(y_pred_flat, y_true_flat)
-                metrics["test/mce"] = calibration_error(
-                    y_pred_flat, y_true_flat, norm="max"
-                )
+                metrics["test/precision"] = precision_score(y_true_flat, y_pred_binary, zero_division=0)
+                metrics["test/recall"] = recall_score(y_true_flat, y_pred_binary, zero_division=0)
+                metrics["test/f1_score"] = f1_score(y_true_flat, y_pred_binary, zero_division=0)
             except Exception as e:
-                print(f"Error calculating pooled metrics: {e}")
+                print(f"Error calculating metrics: {e}")
 
-        # Per-class AUC / ECE scalars
         for k, auc in enumerate(per_class_auc):
             if not np.isnan(auc):
                 metrics[f"test/roc_auc_{self.moa_columns[k]}"] = auc
-        for k, ece in enumerate(per_class_ece):
-            if not np.isnan(ece):
-                metrics[f"test/ece_{self.moa_columns[k]}"] = ece
 
         if self.log_per_fold_details:
             valid_aucs = [a for a in per_class_auc if not np.isnan(a)]
@@ -173,13 +198,8 @@ class LightningMLPClassifier(BaseModel):
             self._log_score_distribution(y_true, y_pred, y_mask)
 
     def _log_score_distribution(self, y_true, y_pred, y_mask):
-        """Boxplot: for each class, distribution of predicted scores on true-positive samples."""
-        import seaborn as sns
-
         K = y_true.shape[1]
         short_names = [c.replace("moa_", "") for c in self.moa_columns]
-
-        # Collect scores assigned to positive examples for each class.
         pos_scores = []
         for k in range(K):
             m = y_mask[:, k] & (y_true[:, k] == 1)
@@ -204,4 +224,4 @@ class LightningMLPClassifier(BaseModel):
         plt.close(fig)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        return torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay)

@@ -57,14 +57,16 @@ def main():
     print(f"  Well-level rows: {len(well_df)}")
 
     features_np = well_df.select(FEATURE_COLS).to_numpy().astype(np.float32)
-    split_np = well_df["hier_split_0"].to_numpy()
+    # Save all 5 hier_split columns as (N, 5) array for cross-validation.
+    splits_np = np.stack(
+        [well_df[f"hier_split_{k}"].to_numpy() for k in range(5)], axis=1
+    )
 
     print(f"  Feature stats: mean={features_np.mean():.3f} std={features_np.std():.3f} "
           f"min={features_np.min():.3f} max={features_np.max():.3f}")
-
-    splits, counts = np.unique(split_np, return_counts=True)
-    for s, c in zip(splits, counts):
-        print(f"    {s}: {c}")
+    for k in range(5):
+        vals, counts = np.unique(splits_np[:, k], return_counts=True)
+        print(f"  hier_split_{k}: " + ", ".join(f"{v}={c}" for v, c in zip(vals, counts)))
 
     for moa_cols, output_file in MOA_SETS:
         if moa_cols is None:
@@ -75,7 +77,8 @@ def main():
             output_path,
             features=features_np,
             labels=labels_np,
-            split=split_np,
+            split=splits_np[:, 0],   # backward-compat: fold 0
+            splits=splits_np,         # all 5 folds, shape (N, 5)
             moa_columns=np.array(moa_cols),
         )
         print(f"  Saved {output_file} ({len(moa_cols)} MoAs, {len(features_np)} wells)")
